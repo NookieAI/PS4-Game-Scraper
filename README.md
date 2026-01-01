@@ -2,43 +2,25 @@
 
 <img width="943" height="467" alt="Screenshot 2026-01-01 185212" src="https://github.com/user-attachments/assets/45fa3088-05c5-4bc6-97d8-21e9f0f64659" />
 
-PS4 Game Scraper
+# PS4 Game Scraper
 
 A desktop application for scraping and browsing PS4 games from dlpsgame.com. Built with Electron, it offers fast scanning, offline caching, lazy loading, and support for multiple download hosts like Akira, Viking, MediaFire, and 1Fichier.
-Features
 
-    Fast Scanning: Concurrently fetches game lists from category pages and RSS feeds.
-    Offline Support: Caches game data locally—view games without internet after initial scan.
-    Lazy Loading: Download links and details load on-demand to save bandwidth.
-    Multiple Hosts: Supports Akira, Viking, MediaFire, and 1Fichier with version info and update separation.
-    User-Friendly UI: Dark theme, favorites, sorting, search, and modal details with screenshots.
-    Portable Build: Creates a standalone exe for easy distribution.
+## Features
+- **Fast Scanning**: Concurrently fetches game lists from category pages and RSS feeds.
+- **Offline Support**: Caches game data locally—view games without internet after initial scan.
+- **Lazy Loading**: Download links and details load on-demand to save bandwidth.
+- **Multiple Hosts**: Supports Akira, Viking, MediaFire, and 1Fichier with version info and update separation.
+- **User-Friendly UI**: Dark theme, favorites, sorting, search, and modal details with screenshots.
+- **Portable Build**: Creates a standalone exe for easy distribution.
 
-Installation
+## Installation
+1. Download or clone the repository.
 
-    Download or clone the repository.
-    Navigate to the project directory: cd ps4-game-scraper
-    Install dependencies: npm install
-
-Usage
-
-    Run the app: npm start (window maximizes automatically).
-    Click "Start" to scan for PS4 games (progress shown).
-    Browse games in a grid; click a card for details, links, and screenshots.
-    Search, sort by date/name, or toggle favorites.
-    Offline mode: Cached games load instantly.
-
-Building the Portable Exe
-
-    Install electron-builder: npm install --save-dev electron-builder
-    Build: npm run dist
-    Output: dist/PS4 Game Scraper 1.0.0.exe
-
-Contributing
-
+## Contributing
 Fork the repo, make changes, and submit a pull request. Report issues via GitHub.
-License
 
+## License
 This project is for personal use. Respect dlpsgame.com's terms. No warranties.
 
 For support, join Discord: Nookie_65120.
