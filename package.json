@@ -1,0 +1,38 @@
+{
+  "name": "ps4-game-scraper",
+  "version": "1.0.0",
+  "description": "PS4 Game Scraper Electron App",
+  "author": "Nookie",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.nookie.ps4scraper",
+    "productName": "PS4 Game Scraper",
+    "icon": "assets/icon1.ico",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**/*",
+      "!build/**/*",
+      "!*.md",
+      "!package-lock.json"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon1.ico"
+    }
+  },
+  "devDependencies": {
+    "electron": "^25.9.8",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "cheerio": "^1.0.0-rc.12"
+  }
+}

@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PS4 Game Scraper</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 20px;
+      background: #000000;
+      color: #f0f0f0;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      position: relative;
+    }
+    h1 {
+      color: #ffffff;
+      text-align: center;
+      text-shadow: 0 0 15px #00d4ff;
+      margin-bottom: 20px;
+    }
+    #status {
+      margin-bottom: 15px;
+      font-weight: bold;
+      text-align: center;
+      color: #00ff88;
+      opacity: 0;
+      transition: opacity 0.5s ease;
+    }
+    #status.show {
+      opacity: 1;
+    }
+    #notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #27ae60;
+      color: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.8);
+      display: none;
+      z-index: 1000;
+      max-width: 300px;
+    }
+    #discord-link {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      font-size: 12px;
+      color: #7289da;
+      text-decoration: none;
+      z-index: 1000;
+      cursor: pointer;
+    }
+    #discord-link:hover {
+      color: #5b6eae;
+      text-decoration: underline;
+    }
+    .button-container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .search-container {
+      flex: 1;
+      max-width: 300px;
+    }
+    .search-container #searchInput {
+      padding: 10px;
+      width: 100%;
+      border-radius: 5px;
+      border: 1px solid #555555;
+      background: #333333;
+      color: #fff;
+    }
+    .action-buttons {
+      display: flex;
+      gap: 10px;
+    }
+    button {
+      padding: 5px 30px;
+      width: 140px;
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: white;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      box-shadow: 0 4px 8px rgba(0, 86, 179, 0.4);
+    }
+    button:hover {
+      background: rgba(255, 255, 255, 0.3);
+      box-shadow: 0 6px 12px rgba(0, 86, 179, 0.6);
+    }
+    button:disabled {
+      background: rgba(255, 255, 255, 0.1);
+      cursor: not-allowed;
+      box-shadow: 0 4px 8px rgba(0, 86, 179, 0.4);
+    }
+    #favBtn {
+      background: none;
+      border: none;
+      box-shadow: none;
+      width: auto;
+      padding: 5px 10px;
+      font-size: 18px;
+      color: #ccc;
+    }
+    #favBtn:hover {
+      transform: none;
+      box-shadow: none;
+    }
+    #gameCount {
+      flex: 0 0 auto;
+      text-align: left;
+      margin-left: 10px;
+      color: #00ff88;
+      font-weight: bold;
+      display: none;
+      font-size: 14px;
+    }
+    #progressRow {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+    #progressContainer {
+      width: 300px;
+      visibility: hidden;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #333333;
+      border-radius: 3px;
+      box-shadow: 0 0 10px #00d4ff, inset 0 0 5px rgba(0, 212, 255, 0.3);
+      overflow: hidden;
+    }
+    .progress-bar::after {
+      content: '';
+      display: block;
+      height: 100%;
+      background: linear-gradient(135deg, #00d4ff, #007bff);
+      border-radius: 3px;
+      box-shadow: 0 0 15px #00d4ff, 0 0 20px #007bff;
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    .progress-bar.indeterminate::after {
+      animation: pulse-wiggle 6s infinite ease-in-out;
+    }
+    @keyframes pulse-wiggle {
+      0% { width: 0%; transform: translateY(0px); }
+      20% { width: 20%; transform: translateY(-1px); }
+      40% { width: 40%; transform: translateY(1px); }
+      60% { width: 60%; transform: translateY(-1px); }
+      80% { width: 80%; transform: translateY(1px); }
+      100% { width: 100%; transform: translateY(0px); }
+    }
+    #progressText {
+      color: #ccc;
+      font-size: 12px;
+      visibility: hidden;
+    }
+    #results {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+      gap: 20px;
+      justify-content: center;
+      margin-top: 10px;
+    }
+    .game-card {
+      background: #333333;
+      border: 1px solid #555555;
+      padding: 10px;
+      border-radius: 12px;
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.8);
+      transition: all 0.3s ease;
+      max-width: 125px;
+      margin: 0 auto;
+      cursor: pointer;
+      position: relative;
+    }
+    .game-card:hover {
+      transform: translateY(-5px);
+      box-shadow: 0 12px 24px rgba(0, 0, 0, 1);
+    }
+    .game-title {
+      font-size: 12px;
+      font-weight: bold;
+      margin-top: 5px;
+      color: white;
+      text-align: center;
+      text-shadow: 0 0 15px #00d4ff;
+    }
+    .game-cover {
+      width: 100%;
+      height: 150px;
+      object-fit: cover;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.8);
+    }
+    .game-details {
+      font-size: 10px;
+      color: #aaa;
+      margin-top: 5px;
+      line-height: 1.4;
+      border-top: 1px solid #555555;
+      padding-top: 5px;
+      text-align: center;
+    }
+    .favorite-star {
+      position: absolute;
+      top: 5px;
+      right: 5px;
+      font-size: 18px;
+      cursor: pointer;
+      color: #ccc;
+      transition: color 0.3s;
+    }
+    .favorite-star.favorited {
+      color: #ffd700;
+    }
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.9);
+    }
+    .modal-content {
+      background-color: #333333;
+      margin: 5% auto;
+      padding: 20px;
+      border: 1px solid #555555;
+      width: 40%;
+      border-radius: 12px;
+      max-height: 80%;
+      overflow-y: auto;
+    }
+    .modal-content .game-cover {
+      height: 250px;
+      object-fit: contain;
+      box-shadow: none;
+    }
+    .close {
+      color: #aaa;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .close:hover {
+      color: white;
+    }
+    .description-section p {
+      margin: 10px 0;
+      line-height: 1.5;
+    }
+    .description-section ul {
+      margin: 10px 0;
+      padding-left: 20px;
+    }
+    .description-section li {
+      margin: 5px 0;
+    }
+    .screenshots-section {
+      margin-top: 20px;
+    }
+    .screenshot-gallery {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .screenshot {
+      max-width: 150px;
+      height: auto;
+      border-radius: 8px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.8);
+      cursor: pointer;
+    }
+    .links-section h3 {
+      margin: 15px 0 10px;
+      font-size: 16px;
+      color: #228B22;
+    }
+    .link-list {
+      list-style: none;
+      padding: 0;
+    }
+    .link-list li {
+      margin: 8px 0;
+      background: #444444;
+      padding: 8px;
+      border-radius: 6px;
+    }
+    .link-list a {
+      color: #007bff;
+      text-decoration: none;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .link-list a:hover {
+      text-decoration: underline;
+      color: #0056b3;
+    }
+    /* Responsive */
+    @media (max-width: 768px) {
+      #progressRow {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      #progressContainer {
+        width: 80%;
+      }
+      .button-container {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .search-container {
+        max-width: none;
+      }
+      #results { grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); }
+      .game-card { max-width: 100px; }
+      .game-cover { height: 120px; }
+      .modal-content {
+        width: 80%;
+      }
+      .modal-content .game-cover {
+        height: 200px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="notification"></div>
+  <div id="discord-link">💬 Nookie_65120</div>
+  <div class="container">
+    <h1>PS4 Game Scraper</h1>
+    <div id="status">Click "Start" to begin.</div>
+    <div class="button-container">
+      <div class="search-container">
+        <input type="text" id="searchInput" placeholder="Search games...">
+      </div>
+      <div id="gameCount"></div>
+      <div class="action-buttons">
+        <button id="cancelBtn" style="display: none;">Cancel Scan</button>
+        <button id="scrapeBtn">Start</button>
+        <button id="clearCacheBtn">Clear Cache</button>
+        <button id="retryBtn" style="display: none;">Retry</button>
+        <button id="sortBtn">Sort: Date</button>
+        <button id="favBtn"></button>
+      </div>
+    </div>
+    <div id="progressRow">
+      <div id="progressText"></div>
+      <div id="progressContainer">
+        <div id="progressBar" class="progress-bar"></div>
+      </div>
+    </div>
+    <div id="results"></div>
+  </div>
+
+  <div id="modal" class="modal">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="fullImageModal" class="modal">
+    <div class="modal-content">
+      <span class="close">&times;</span>
+      <img id="fullImage" src="" style="width: 100%; height: auto; object-fit: contain;">
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
