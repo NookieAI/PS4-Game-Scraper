@@ -109,7 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
   async function getGamesFromRSS() {
     try {
       const rssUrl = `${BASE_URL}/category/ps4/feed/`;
-      const response = await axios.get(rssUrl, { timeout: 10000 });
+      const response = await axios.get(rssUrl, { timeout: 2000 }); // Reduced to 2s for max speed
       const $ = cheerio.load(response.data, { xmlMode: true });
       const rssData = {};
       $('item').each((i, el) => {
@@ -131,17 +131,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Function to get all games from category pages (full list with dates/covers) - optimized for speed with concurrent batch fetching
+  // Function to get all games from category pages (max speed)
   async function getGamesFromCategory() {
     const games = {};
     let page = 1;
-    const batchSize = 5; // Fetch 5 pages concurrently
+    const batchSize = 20; // Max batch size for speed
     while (true) {
       const promises = [];
       for (let i = 0; i < batchSize; i++) {
         const currentPage = page + i;
         const pageUrl = currentPage === 1 ? `${BASE_URL}/category/ps4/` : `${BASE_URL}/category/ps4/page/${currentPage}/`;
-        promises.push(axios.get(pageUrl, { timeout: 10000 }).then(response => ({ page: currentPage, response })).catch(() => null));
+        promises.push(axios.get(pageUrl, { timeout: 2000 }).then(response => ({ page: currentPage, response })).catch(() => null)); // Reduced to 2s
       }
       const results = await Promise.allSettled(promises);
       let foundAny = false;
@@ -160,7 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
               const cleanTitle = title.replace(/\s+/g, ' ').trim();
               const fullUrl = url.startsWith('http') ? url : `${BASE_URL}${url}`;
               const formattedDate = date ? new Date(date).toISOString().split('T')[0] : '';
-              games[cleanTitle] = { akira: [], viking: [], mediafire: [], onefile: [], cover: cover.startsWith('http') ? cover : `${BASE_URL}${cover}`, voice: '', subtitles: '', notes: '', size: '', date: formattedDate, url: fullUrl, description: '', screenshots: [] };
+              games[cleanTitle] = { akira: [], viking: [], mediafire: [], onefichier: [], cover: cover.startsWith('http') ? cover : `${BASE_URL}${cover}`, voice: '', subtitles: '', notes: '', size: '', date: formattedDate, url: fullUrl, description: '', screenshots: [] };
               found = true;
               currentGamesFound++; // Increment counter
             }
@@ -171,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!foundAny) break;
       if (progressText) progressText.textContent = `Fetching game list... Found ${currentGamesFound} games so far.`;
       page += batchSize;
-      await new Promise(resolve => setTimeout(resolve, 100)); // Increased delay
+      await new Promise(resolve => setTimeout(resolve, 20)); // Min delay
     }
     console.log('Games from category:', Object.keys(games).length);
     return games;
@@ -180,18 +180,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // Function to scrape a game page for Akira and Viking download links, description, and screenshots (lazy load)
   async function scrapeGamePage(gameUrl, gameTitle) {
     try {
-      const response = await axios.get(gameUrl, { timeout: 10000 });
+      const response = await axios.get(gameUrl, { timeout: 2000 }); // Reduced to 2s
       const $ = cheerio.load(response.data);
       // Collect download links by host
       const akiraLinks = [];
       const vikingLinks = [];
       const mediafireLinks = [];
-      const onefileLinks = [];
+      const onefichierLinks = [];
       $('a[href]').each((i, el) => {
         const href = $(el).attr('href');
         if (href) {
-          const versionText = $(el).closest('div').text().trim().replace(/\s+/g, ' ') || $(el).closest('p').text().trim().replace(/\s+/g, ' ') || $(el).text().trim() || 'Download Link';
-          const linkData = { link: href, version: versionText };
+          const versionText = $(el).closest('p').text().trim().replace(/\s+/g, ' ') || $(el).closest('div').text().trim().replace(/\s+/g, ' ') || $(el).text().trim() || 'Download Link';
+          const linkData = { link: href, version: versionText, type: versionText.toLowerCase().includes('update') ? 'update' : 'game' };
           if (href.includes('akirabox.com')) {
             akiraLinks.push(linkData);
           } else if (href.includes('vikingfile.com')) {
@@ -200,8 +200,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // Clean MediaFire link by removing trailing '/file'
             linkData.link = href.replace(/\/file$/, '');
             mediafireLinks.push(linkData);
-          } else if (href.includes('1file.com')) {
-            onefileLinks.push(linkData);
+          } else if (href.includes('1fichier.com')) {
+            onefichierLinks.push(linkData);
           }
         }
       });
@@ -234,7 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
         gamesData[gameTitle].akira = akiraLinks;
         gamesData[gameTitle].viking = vikingLinks;
         gamesData[gameTitle].mediafire = mediafireLinks;
-        gamesData[gameTitle].onefile = onefileLinks;
+        gamesData[gameTitle].onefichier = onefichierLinks;
         gamesData[gameTitle].cover = cover || gamesData[gameTitle].cover;
         gamesData[gameTitle].voice = voice;
         gamesData[gameTitle].subtitles = subtitles;
@@ -250,11 +250,11 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
       
-      return { akira: akiraLinks, viking: vikingLinks, mediafire: mediafireLinks, onefile: onefileLinks, title, metaDesc, cover, voice, subtitles, notes, size, date, description, screenshots };
+      return { akira: akiraLinks, viking: vikingLinks, mediafire: mediafireLinks, onefichier: onefichierLinks, title, metaDesc, cover, voice, subtitles, notes, size, date, description, screenshots };
     } catch (error) {
       console.error('Error scraping game page:', error);
       showNotification('Failed to load game details.', 'error');
-      return { akira: [], viking: [], mediafire: [], onefile: [], title: '', metaDesc: '', cover: '', voice: '', subtitles: '', notes: '', size: '', date: '', description: '', screenshots: [] };
+      return { akira: [], viking: [], mediafire: [], onefichier: [], title: '', metaDesc: '', cover: '', voice: '', subtitles: '', notes: '', size: '', date: '', description: '', screenshots: [] };
     }
   }
 
@@ -350,7 +350,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const data = gamesData[gameTitle];
     if (!data) return;
     
-    if (data.akira.length === 0 && data.viking.length === 0 && data.mediafire.length === 0 && data.onefile.length === 0 && data.url) {
+    if (data.akira.length === 0 && data.viking.length === 0 && data.mediafire.length === 0 && data.onefichier.length === 0 && data.url) {
       showNotification('Loading game details...', 'info');
       await scrapeGamePage(data.url, gameTitle);
       // Refresh data after scraping
@@ -410,146 +410,97 @@ document.addEventListener('DOMContentLoaded', () => {
       modalBody.appendChild(screenshotsSection);
     }
     
-    // Akira Links
-    if (data.akira && data.akira.length > 0) {
-      const akiraSection = document.createElement('div');
-      akiraSection.className = 'links-section';
-      akiraSection.innerHTML = '<h3>Akira Links:</h3>';
-      const akiraList = document.createElement('ul');
-      akiraList.className = 'link-list';
-      data.akira.forEach(item => {
-        const li = document.createElement('li');
-        const a = document.createElement('a');
-        a.href = item.link;
-        let displayText = '';
-        const ppsaMatch = item.version.match(/PPSA\d+ – [A-Z]{3}/g);
-        if (ppsaMatch) {
-          const ppsaStr = ppsaMatch.join(' ').replace(/ – /g, ' (') + ')';
-          displayText += ppsaStr + ' - ';
-        }
-        const versionMatch = item.version.match(/\( ?v[\d.]+\)/);
-        if (versionMatch) displayText += versionMatch[0].replace(' ', '');
-        a.textContent = displayText || item.link;
-        a.addEventListener('click', (e) => {
-          e.preventDefault();
-          shell.openExternal(item.link);
+    // Helper function to create link sections with game/update separation
+    function createLinkSection(title, links) {
+      if (!links || links.length === 0) {
+        const noLinks = document.createElement('p');
+        noLinks.textContent = `No ${title} links available yet. Try refreshing the modal.`;
+        return noLinks;
+      }
+      
+      const section = document.createElement('div');
+      section.className = 'links-section';
+      section.innerHTML = `<h3 style="text-decoration: underline;">${title}:</h3>`;
+      
+      const gameLinks = links.filter(item => item.type === 'game');
+      const updateLinks = links.filter(item => item.type === 'update');
+      
+      if (gameLinks.length > 0) {
+        const gameSubSection = document.createElement('div');
+        gameSubSection.innerHTML = '<h4 style="text-decoration: underline;">Game:</h4>';
+        const gameList = document.createElement('ul');
+        gameList.className = 'link-list';
+        gameLinks.forEach(item => {
+          const li = document.createElement('li');
+          const a = document.createElement('a');
+          a.href = item.link;
+          const hostname = new URL(item.link).hostname;
+          const version = item.link.match(/v(\d+\.\d+)/)?.[1] || '';
+          let displayText = hostname;
+          if (version) displayText += ' - v' + version;
+          const ppsaMatch = item.version.match(/PPSA\d+ – [A-Z]{3}/g);
+          if (ppsaMatch) {
+            const ppsaStr = ppsaMatch.join(' ').replace(/ – /g, ' (') + ')';
+            displayText += ' - ' + ppsaStr;
+          }
+          a.textContent = displayText;
+          a.addEventListener('click', (e) => {
+            e.preventDefault();
+            shell.openExternal(item.link);
+          });
+          li.appendChild(a);
+          gameList.appendChild(li);
         });
-        li.appendChild(a);
-        akiraList.appendChild(li);
-      });
-      akiraSection.appendChild(akiraList);
-      modalBody.appendChild(akiraSection);
-    } else {
-      const noAkira = document.createElement('p');
-      noAkira.textContent = 'No Akira links available yet. Try refreshing the modal.';
-      modalBody.appendChild(noAkira);
+        gameSubSection.appendChild(gameList);
+        section.appendChild(gameSubSection);
+      }
+      
+      if (updateLinks.length > 0) {
+        // Group update links by update info
+        const updateGroups = {};
+        updateLinks.forEach(item => {
+          const updateInfo = item.version.split(':')[0].trim();
+          if (!updateGroups[updateInfo]) updateGroups[updateInfo] = [];
+          updateGroups[updateInfo].push(item);
+        });
+        
+        for (const [updateInfo, groupLinks] of Object.entries(updateGroups)) {
+          const updateSubSection = document.createElement('div');
+          updateSubSection.innerHTML = `<h4 style="text-decoration: underline;">${updateInfo}:</h4>`;
+          const updateList = document.createElement('ul');
+          updateList.className = 'link-list';
+          groupLinks.forEach(item => {
+            const li = document.createElement('li');
+            const a = document.createElement('a');
+            a.href = item.link;
+            const hostname = new URL(item.link).hostname;
+            a.textContent = hostname;
+            a.addEventListener('click', (e) => {
+              e.preventDefault();
+              shell.openExternal(item.link);
+            });
+            li.appendChild(a);
+            updateList.appendChild(li);
+          });
+          updateSubSection.appendChild(updateList);
+          section.appendChild(updateSubSection);
+        }
+      }
+      
+      return section;
     }
+    
+    // Akira Links
+    modalBody.appendChild(createLinkSection('Akira Links', data.akira));
     
     // Viking Links
-    if (data.viking && data.viking.length > 0) {
-      const vikingSection = document.createElement('div');
-      vikingSection.className = 'links-section';
-      vikingSection.innerHTML = '<h3>Viking Links:</h3>';
-      const vikingList = document.createElement('ul');
-      vikingList.className = 'link-list';
-      data.viking.forEach(item => {
-        const li = document.createElement('li');
-        const a = document.createElement('a');
-        a.href = item.link;
-        let displayText = '';
-        const ppsaMatch = item.version.match(/PPSA\d+ – [A-Z]{3}/g);
-        if (ppsaMatch) {
-          const ppsaStr = ppsaMatch.join(' ').replace(/ – /g, ' (') + ')';
-          displayText += ppsaStr + ' - ';
-        }
-        const versionMatch = item.version.match(/\( ?v[\d.]+\)/);
-        if (versionMatch) displayText += versionMatch[0].replace(' ', '');
-        a.textContent = displayText || item.link;
-        a.addEventListener('click', (e) => {
-          e.preventDefault();
-          shell.openExternal(item.link);
-        });
-        li.appendChild(a);
-        vikingList.appendChild(li);
-      });
-      vikingSection.appendChild(vikingList);
-      modalBody.appendChild(vikingSection);
-    } else {
-      const noViking = document.createElement('p');
-      noViking.textContent = 'No Viking links available yet. Try refreshing the modal.';
-      modalBody.appendChild(noViking);
-    }
+    modalBody.appendChild(createLinkSection('Viking Links', data.viking));
     
     // MediaFire Links
-    if (data.mediafire && data.mediafire.length > 0) {
-      const mediafireSection = document.createElement('div');
-      mediafireSection.className = 'links-section';
-      mediafireSection.innerHTML = '<h3>MediaFire Links:</h3>';
-      const mediafireList = document.createElement('ul');
-      mediafireList.className = 'link-list';
-      data.mediafire.forEach(item => {
-        const li = document.createElement('li');
-        const a = document.createElement('a');
-        a.href = item.link;
-        let displayText = '';
-        const ppsaMatch = item.version.match(/PPSA\d+ – [A-Z]{3}/g);
-        if (ppsaMatch) {
-          const ppsaStr = ppsaMatch.join(' ').replace(/ – /g, ' (') + ')';
-          displayText += ppsaStr + ' - ';
-        }
-        const versionMatch = item.version.match(/\( ?v[\d.]+\)/);
-        if (versionMatch) displayText += versionMatch[0].replace(' ', '');
-        // Display short MediaFire link
-        a.textContent = displayText + item.link.replace(/\/[^\/]+$/, '') || item.link;
-        a.addEventListener('click', (e) => {
-          e.preventDefault();
-          shell.openExternal(item.link);
-        });
-        li.appendChild(a);
-        mediafireList.appendChild(li);
-      });
-      mediafireSection.appendChild(mediafireList);
-      modalBody.appendChild(mediafireSection);
-    } else {
-      const noMediafire = document.createElement('p');
-      noMediafire.textContent = 'No MediaFire links available yet. Try refreshing the modal.';
-      modalBody.appendChild(noMediafire);
-    }
+    modalBody.appendChild(createLinkSection('MediaFire Links', data.mediafire));
     
-    // OneFile Links
-    if (data.onefile && data.onefile.length > 0) {
-      const onefileSection = document.createElement('div');
-      onefileSection.className = 'links-section';
-      onefileSection.innerHTML = '<h3>OneFile Links:</h3>';
-      const onefileList = document.createElement('ul');
-      onefileList.className = 'link-list';
-      data.onefile.forEach(item => {
-        const li = document.createElement('li');
-        const a = document.createElement('a');
-        a.href = item.link;
-        let displayText = '';
-        const ppsaMatch = item.version.match(/PPSA\d+ – [A-Z]{3}/g);
-        if (ppsaMatch) {
-          const ppsaStr = ppsaMatch.join(' ').replace(/ – /g, ' (') + ')';
-          displayText += ppsaStr + ' - ';
-        }
-        const versionMatch = item.version.match(/\( ?v[\d.]+\)/);
-        if (versionMatch) displayText += versionMatch[0].replace(' ', '');
-        a.textContent = displayText || item.link;
-        a.addEventListener('click', (e) => {
-          e.preventDefault();
-          shell.openExternal(item.link);
-        });
-        li.appendChild(a);
-        onefileList.appendChild(li);
-      });
-      onefileSection.appendChild(onefileList);
-      modalBody.appendChild(onefileSection);
-    } else {
-      const noOnefile = document.createElement('p');
-      noOnefile.textContent = 'No OneFile links available yet. Try refreshing the modal.';
-      modalBody.appendChild(noOnefile);
-    }
+    // OneFichier Links
+    modalBody.appendChild(createLinkSection('1Fichier Links', data.onefichier));
     
     modal.style.display = 'block';
   }
@@ -626,7 +577,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // Fallback to RSS if category fails
       finalGames = {};
       for (const [title, data] of Object.entries(rssData)) {
-        finalGames[title] = { akira: [], viking: [], mediafire: [], onefile: [], cover: data.cover, voice: '', subtitles: '', notes: '', size: '', date: data.date, url: data.url, description: '', screenshots: [] };
+        finalGames[title] = { akira: [], viking: [], mediafire: [], onefichier: [], cover: data.cover, voice: '', subtitles: '', notes: '', size: '', date: data.date, url: data.url, description: '', screenshots: [] };
       }
     } else {
       // Enrich with RSS data if available
