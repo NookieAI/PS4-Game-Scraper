@@ -24,3 +24,5 @@ Fork the repo, make changes, and submit a pull request. Report issues via GitHub
 This project is for personal use. Respect dlpsgame.com's terms. No warranties.
 
 For support, join Discord: Nookie_65120.
+
+This is just a scraper, it does not host ANY actual game files. It only searches and displays exteranl links found online.
