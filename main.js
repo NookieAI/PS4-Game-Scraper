@@ -12,13 +12,15 @@ function createWindow() {
       contextIsolation: false,
     },
     icon: path.join(__dirname, 'assets', 'icon1.ico'),
-    maximized: true,  // Start maximized
+    show: false, // Hide until ready
   });
 
   mainWindow.loadFile('index.html');
 
-  // Open DevTools in development (optional)
-  // mainWindow.webContents.openDevTools();
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.maximize(); // Maximize on load
+    mainWindow.show();
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
