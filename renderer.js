@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const $ = cheerio.load(response.data, { xmlMode: true });
       const rssData = {};
       $('item').each((i, el) => {
-        const title = $(el).find('title').text().text().trim();
+        const title = $(el).find('title').text().trim();
         const link = $(el).find('link').text().trim();
         const pubDate = $(el).find('pubDate').text().trim();
         const cover = $(el).find('enclosure').attr('url') || '';
@@ -409,6 +409,7 @@ document.addEventListener('DOMContentLoaded', () => {
         img.addEventListener('click', () => {
           fullImage.src = src;
           fullImageModal.style.display = 'block';
+          document.body.style.overflow = 'hidden';
         });
         gallery.appendChild(img);
       });
@@ -518,8 +519,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // OneFichier Links
     modalBody.appendChild(createLinkSection('1Fichier Links', data.onefichier));
     
-    modal.style.display = 'block';
     modalBody.scrollTop = 0;
+    modal.style.display = 'block';
+    document.body.style.overflow = 'hidden';
   }
 
   // Function to display results sorted by date or name, filtered by favorites if needed
@@ -731,18 +733,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   closeBtn.addEventListener('click', () => {
     modal.style.display = 'none';
+    document.body.style.overflow = '';
   });
 
   fullImageClose.addEventListener('click', () => {
     fullImageModal.style.display = 'none';
+    document.body.style.overflow = '';
   });
 
   window.addEventListener('click', (event) => {
     if (event.target === modal) {
       modal.style.display = 'none';
+      document.body.style.overflow = '';
     }
     if (event.target === fullImageModal) {
       fullImageModal.style.display = 'none';
+      document.body.style.overflow = '';
     }
   });
 
@@ -750,9 +756,11 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && modal.style.display === 'block') {
       modal.style.display = 'none';
+      document.body.style.overflow = '';
     }
     if (event.key === 'Escape' && fullImageModal.style.display === 'block') {
       fullImageModal.style.display = 'none';
+      document.body.style.overflow = '';
     }
   });
 
