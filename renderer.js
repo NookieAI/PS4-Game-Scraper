@@ -95,25 +95,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Function to disable/enable buttons during scan (only Cancel enabled during scan)
   function setButtonsDuringScan(scanning) {
-    scrapeBtn.disabled = scanning;
-    cancelBtn.disabled = !scanning;
-    cancelBtn.style.display = scanning ? 'inline-block' : 'none';
-    clearCacheBtn.disabled = scanning;
-    retryBtn.disabled = scanning;
+    if (scrapeBtn) scrapeBtn.disabled = scanning;
+    if (cancelBtn) cancelBtn.disabled = !scanning;
+    if (cancelBtn) cancelBtn.style.display = scanning ? 'inline-block' : 'none';
+    if (clearCacheBtn) clearCacheBtn.disabled = scanning;
+    if (retryBtn) retryBtn.disabled = scanning;
     if (sortBtn) sortBtn.disabled = scanning;
     if (favBtn) favBtn.disabled = scanning;
-    searchInput.disabled = scanning;
+    if (searchInput) searchInput.disabled = scanning;
   }
 
   // Function to fetch games from RSS feed (supplemental data)
   async function getGamesFromRSS() {
     try {
       const rssUrl = `${BASE_URL}/category/ps4/feed/`;
-      const response = await axios.get(rssUrl, { timeout: 2000 }); // Reduced to 2s for max speed
+      const response = await axios.get(rssUrl, { timeout: 3000 }); // Reduced timeout for speed
       const $ = cheerio.load(response.data, { xmlMode: true });
       const rssData = {};
       $('item').each((i, el) => {
-        const title = $(el).find('title').text().trim();
+        const title = $(el).find('title').text().text().trim();
         const link = $(el).find('link').text().trim();
         const pubDate = $(el).find('pubDate').text().trim();
         const cover = $(el).find('enclosure').attr('url') || '';
@@ -131,17 +131,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // Function to get all games from category pages (max speed)
+  // Function to get all games from category pages (highly optimized for speed)
   async function getGamesFromCategory() {
     const games = {};
     let page = 1;
-    const batchSize = 20; // Max batch size for speed
+    const batchSize = 15; // Reverted to original for reliability
     while (true) {
       const promises = [];
       for (let i = 0; i < batchSize; i++) {
         const currentPage = page + i;
         const pageUrl = currentPage === 1 ? `${BASE_URL}/category/ps4/` : `${BASE_URL}/category/ps4/page/${currentPage}/`;
-        promises.push(axios.get(pageUrl, { timeout: 2000 }).then(response => ({ page: currentPage, response })).catch(() => null)); // Reduced to 2s
+        promises.push(axios.get(pageUrl, { timeout: 5000 }).then(response => ({ page: currentPage, response })).catch(() => null)); // Reverted timeout
       }
       const results = await Promise.allSettled(promises);
       let foundAny = false;
@@ -171,7 +171,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!foundAny) break;
       if (progressText) progressText.textContent = `Fetching game list... Found ${currentGamesFound} games so far.`;
       page += batchSize;
-      await new Promise(resolve => setTimeout(resolve, 20)); // Min delay
+      await new Promise(resolve => setTimeout(resolve, 25)); // Reverted delay
     }
     console.log('Games from category:', Object.keys(games).length);
     return games;
@@ -180,7 +180,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Function to scrape a game page for Akira and Viking download links, description, and screenshots (lazy load)
   async function scrapeGamePage(gameUrl, gameTitle) {
     try {
-      const response = await axios.get(gameUrl, { timeout: 2000 }); // Reduced to 2s
+      const response = await axios.get(gameUrl, { timeout: 3000 }); // Reduced timeout
       const $ = cheerio.load(response.data);
       // Collect download links by host
       const akiraLinks = [];
@@ -191,7 +191,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const href = $(el).attr('href');
         if (href) {
           const versionText = $(el).closest('p').text().trim().replace(/\s+/g, ' ') || $(el).closest('div').text().trim().replace(/\s+/g, ' ') || $(el).text().trim() || 'Download Link';
-          const linkData = { link: href, version: versionText, type: versionText.toLowerCase().includes('update') ? 'update' : 'game' };
+          // Extract version from link or text
+          let version = href.match(/v(\d+\.\d+)/)?.[1] || versionText.match(/(\d+\.\d+)/)?.[1] || '';
+          let type = versionText.toLowerCase().includes('update') ? 'update' : 'game';
+          const linkData = { link: href, version: versionText, extractedVersion: version, type: type };
           if (href.includes('akirabox.com')) {
             akiraLinks.push(linkData);
           } else if (href.includes('vikingfile.com')) {
@@ -243,6 +246,9 @@ document.addEventListener('DOMContentLoaded', () => {
         gamesData[gameTitle].date = date || gamesData[gameTitle].date;
         gamesData[gameTitle].description = description;
         gamesData[gameTitle].screenshots = screenshots;
+        gamesData[gameTitle].pageTitle = title;
+        const pageCUSA = $('body').text().match(/CUSA\d+/) ? $('body').text().match(/CUSA\d+/)[0] : null;
+        gamesData[gameTitle].cusa = pageCUSA;
         try {
           localStorage.setItem('gamesData', JSON.stringify(gamesData));
         } catch (storageError) {
@@ -427,22 +433,23 @@ document.addEventListener('DOMContentLoaded', () => {
       
       if (gameLinks.length > 0) {
         const gameSubSection = document.createElement('div');
-        gameSubSection.innerHTML = '<h4 style="text-decoration: underline;">Game:</h4>';
+        gameSubSection.innerHTML = '<h4>Game:</h4>';
         const gameList = document.createElement('ul');
         gameList.className = 'link-list';
         gameLinks.forEach(item => {
           const li = document.createElement('li');
           const a = document.createElement('a');
           a.href = item.link;
-          const hostname = new URL(item.link).hostname;
-          const version = item.link.match(/v(\d+\.\d+)/)?.[1] || '';
-          let displayText = hostname;
-          if (version) displayText += ' - v' + version;
-          const ppsaMatch = item.version.match(/PPSA\d+ – [A-Z]{3}/g);
-          if (ppsaMatch) {
-            const ppsaStr = ppsaMatch.join(' ').replace(/ – /g, ' (') + ')';
-            displayText += ' - ' + ppsaStr;
-          }
+          // Construct file name
+          const codeMatch = item.version.match(/(CUSA\d+)/) || (data.cusa && data.cusa.match(/(CUSA\d+)/)) || (data.pageTitle && data.pageTitle.match(/(CUSA\d+)/)) || gameTitle.match(/(CUSA\d+)/);
+          const code = codeMatch ? codeMatch[1] : 'CUSA00000';
+          const regionMatch = item.version.match(/–\s*([A-Z]{3})/) || (data.pageTitle && data.pageTitle.match(/–\s*([A-Z]{3})/)) || gameTitle.match(/–\s*([A-Z]{3})/);
+          const region = regionMatch ? regionMatch[1] : 'EUR';
+          const gameName = gameTitle.split(' – ')[0].replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+          const versionStr = item.extractedVersion ? `V${item.extractedVersion.replace('.', '_')}` : 'V1_000';
+          const typeStr = item.type.charAt(0).toUpperCase() + item.type.slice(1);
+          const displayText = `${code}_–_${region}_${gameName}_${versionStr}_${typeStr}_By-[DLPSGAME.COM].zip`;
+          console.log('code:', code, 'region:', region, 'gameName:', gameName, 'item.version:', item.version, 'data.cusa:', data.cusa, 'data.pageTitle:', data.pageTitle, 'gameTitle:', gameTitle);
           a.textContent = displayText;
           a.addEventListener('click', (e) => {
             e.preventDefault();
@@ -466,15 +473,24 @@ document.addEventListener('DOMContentLoaded', () => {
         
         for (const [updateInfo, groupLinks] of Object.entries(updateGroups)) {
           const updateSubSection = document.createElement('div');
-          updateSubSection.innerHTML = `<h4 style="text-decoration: underline;">${updateInfo}:</h4>`;
+          updateSubSection.innerHTML = `<h4>${updateInfo}:</h4>`;
           const updateList = document.createElement('ul');
           updateList.className = 'link-list';
           groupLinks.forEach(item => {
             const li = document.createElement('li');
             const a = document.createElement('a');
             a.href = item.link;
-            const hostname = new URL(item.link).hostname;
-            a.textContent = hostname;
+            // Construct file name
+            const codeMatch = item.version.match(/(CUSA\d+)/) || (data.cusa && data.cusa.match(/(CUSA\d+)/)) || (data.pageTitle && data.pageTitle.match(/(CUSA\d+)/)) || gameTitle.match(/(CUSA\d+)/);
+            const code = codeMatch ? codeMatch[1] : 'CUSA00000';
+            const regionMatch = item.version.match(/–\s*([A-Z]{3})/) || (data.pageTitle && data.pageTitle.match(/–\s*([A-Z]{3})/)) || gameTitle.match(/–\s*([A-Z]{3})/);
+            const region = regionMatch ? regionMatch[1] : 'EUR';
+            const gameName = gameTitle.split(' – ')[0].replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '');
+            const versionStr = item.extractedVersion ? `V${item.extractedVersion.replace('.', '_')}` : 'V1_000';
+            const typeStr = item.type.charAt(0).toUpperCase() + item.type.slice(1);
+            const displayText = `${code}_–_${region}_${gameName}_${versionStr}_${typeStr}_By-[DLPSGAME.COM].zip`;
+            console.log('code:', code, 'region:', region, 'gameName:', gameName, 'item.version:', item.version, 'data.cusa:', data.cusa, 'data.pageTitle:', data.pageTitle, 'gameTitle:', gameTitle);
+            a.textContent = displayText;
             a.addEventListener('click', (e) => {
               e.preventDefault();
               shell.openExternal(item.link);
@@ -503,6 +519,7 @@ document.addEventListener('DOMContentLoaded', () => {
     modalBody.appendChild(createLinkSection('1Fichier Links', data.onefichier));
     
     modal.style.display = 'block';
+    modalBody.scrollTop = 0;
   }
 
   // Function to display results sorted by date or name, filtered by favorites if needed
@@ -692,7 +709,7 @@ document.addEventListener('DOMContentLoaded', () => {
   displayCachedResults();
   setButtonsDuringScan(false);
 
-  // Ensure progress bar and text are always hidden on load
+  // Ensure progress bar and text are hidden on load
   if (progressContainer) progressContainer.style.visibility = 'hidden';
   if (progressText) {
     progressText.textContent = '';
@@ -739,13 +756,41 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  scrapeBtn.addEventListener('click', () => {
-    console.log('Button clicked');
-    runScraper();
-  });
-  if (cancelBtn) cancelBtn.addEventListener('click', cancelScan);
-  if (clearCacheBtn) clearCacheBtn.addEventListener('click', clearCache);
-  if (retryBtn) retryBtn.addEventListener('click', retryScraper);
-  if (sortBtn) sortBtn.addEventListener('click', toggleSort);
-  if (favBtn) favBtn.addEventListener('click', toggleFavorites);
+  // Attach button listeners with debug logs
+  if (scrapeBtn) {
+    scrapeBtn.addEventListener('click', () => {
+      console.log('Scrape button clicked');
+      runScraper();
+    });
+  }
+  if (cancelBtn) {
+    cancelBtn.addEventListener('click', () => {
+      console.log('Cancel button clicked');
+      cancelScan();
+    });
+  }
+  if (clearCacheBtn) {
+    clearCacheBtn.addEventListener('click', () => {
+      console.log('Clear Cache button clicked');
+      clearCache();
+    });
+  }
+  if (retryBtn) {
+    retryBtn.addEventListener('click', () => {
+      console.log('Retry button clicked');
+      retryScraper();
+    });
+  }
+  if (sortBtn) {
+    sortBtn.addEventListener('click', () => {
+      console.log('Sort button clicked');
+      toggleSort();
+    });
+  }
+  if (favBtn) {
+    favBtn.addEventListener('click', () => {
+      console.log('Fav button clicked');
+      toggleFavorites();
+    });
+  }
 });

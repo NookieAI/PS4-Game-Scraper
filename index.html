@@ -251,6 +251,7 @@
       border-radius: 12px;
       max-height: 80%;
       overflow-y: auto;
+      overflow-x: hidden;
     }
     .modal-content .game-cover {
       height: 250px;
@@ -314,6 +315,8 @@
       text-decoration: none;
       font-weight: bold;
       cursor: pointer;
+      word-wrap: break-word;
+      white-space: normal;
     }
     .link-list a:hover {
       text-decoration: underline;
@@ -340,10 +343,30 @@
       .game-cover { height: 120px; }
       .modal-content {
         width: 80%;
+        overflow-x: hidden;
       }
-      .modal-content .game-cover {
-        height: 200px;
+      .link-list a {
+        word-wrap: break-word;
+        white-space: normal;
       }
+    }
+    /* Dark Scrollbar */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #333333 #000000;
+    }
+    *::-webkit-scrollbar {
+      width: 12px;
+    }
+    *::-webkit-scrollbar-track {
+      background: #000000;
+    }
+    *::-webkit-scrollbar-thumb {
+      background: #333333;
+      border-radius: 6px;
+    }
+    *::-webkit-scrollbar-thumb:hover {
+      background: #555555;
     }
   </style>
 </head>
@@ -364,7 +387,7 @@
         <button id="clearCacheBtn">Clear Cache</button>
         <button id="retryBtn" style="display: none;">Retry</button>
         <button id="sortBtn">Sort: Date</button>
-        <button id="favBtn"></button>
+        <button id="favBtn">★</button>
       </div>
     </div>
     <div id="progressRow">
