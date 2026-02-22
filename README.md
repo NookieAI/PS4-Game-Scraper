@@ -20,6 +20,4 @@ A desktop application for scraping and browsing PS4 games from dlpsgame.com. Bui
 ## License
 This project is for personal use. No warranties.
 
-For support, join Discord: Nookie_65120.
-
 This is just a scraper, it does not host ANY actual game files. It only searches and displays exteranl links found online.
