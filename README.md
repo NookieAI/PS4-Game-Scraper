@@ -1,23 +1,34 @@
 ❤️ Donate to the project: https://ko-fi.com/nookie_65120 🙏
 
-<img width="943" height="467" alt="Screenshot 2026-01-01 185212" src="https://github.com/user-attachments/assets/45fa3088-05c5-4bc6-97d8-21e9f0f64659" />
+A Windows desktop app for browsing and finding PS4 game downloads. Browse a library of 2000+ titles, search by name, and open game detail modals showing region variants, firmware compatibility, mirror links, passwords, and language info - all fetched live so links are always current.
+Features
 
-# PS4 Game Scraper
+    2,000+ game library loaded instantly from a bundled cache on first launch. More games added every day!!
+    Live link fetching - download links are always fetched fresh when you open a game, so updated or replaced mirrors are never missed
+    Region variants - each game shows separate collapsible blocks per region/version (CUSA, STRN, etc.) with uploader credit, firmware compatibility notes, and a full set of mirror buttons
+    Per-version metadata - password (click to copy), voice language, menu/subtitle language, DLC contents links
+    Smart incremental scrape - the Scrape button checks for new games only, stopping as soon as it finds already-known titles
+    Search - instant filter across all titles as you type
+    Sort by title or date added, preference saved between sessions
+    Screenshot lightbox - click any screenshot thumbnail to view full size, with a Save Image button
+    ↻ Refresh links button in every game modal to force a fresh fetch without reopening
 
-A desktop application for scraping and browsing PS4 games from dlpsgame.com. Built with Electron, it offers fast scanning, offline caching, lazy loading, and support for multiple download hosts like Akira, Viking, MediaFire, and 1Fichier.
+Installation
 
-## Features
-- **Fast Scanning**: Concurrently fetches game lists from category pages and RSS feeds.
-- **Offline Support**: Caches game data locally—view games without internet after initial scan.
-- **Lazy Loading**: Download links and details load on-demand to save bandwidth.
-- **Multiple Hosts**: Supports Akira, Viking, MediaFire, and 1Fichier with version info and update separation.
-- **User-Friendly UI**: Dark theme, favorites, sorting, search, and modal details with screenshots.
-- **Portable Build**: Creates a standalone exe for easy distribution.
+    Download the latest .exe from the [Releases] page
+    Run it - no installer needed, it's a portable executable
 
-## Installation
-1. Download the .exe from the repository.
+Usage
+Browsing
 
-## License
-This project is for personal use. No warranties.
+Type in the search box to filter games instantly. Click any game card to open the detail modal.
+Game Modal
+
+    Each collapsible block is a separate region/version - click the header to expand or collapse
+    Mirror buttons open the download link in your default browser
+    Click the password to copy it to clipboard
+    Use ↻ Refresh links at the bottom to re-fetch the latest links at any time
+
+---
 
 This is just a scraper, it does not host ANY actual game files. It only searches and displays exteranl links found online.
