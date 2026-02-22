@@ -21,7 +21,7 @@ A desktop application for scraping and browsing PS4 games from dlpsgame.com. Bui
 Fork the repo, make changes, and submit a pull request. Report issues via GitHub.
 
 ## License
-This project is for personal use. Respect dlpsgame.com's terms. No warranties.
+This project is for personal use. No warranties.
 
 For support, join Discord: Nookie_65120.
 
