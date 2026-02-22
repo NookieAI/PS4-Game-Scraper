@@ -15,7 +15,7 @@ A desktop application for scraping and browsing PS4 games from dlpsgame.com. Bui
 - **Portable Build**: Creates a standalone exe for easy distribution.
 
 ## Installation
-1. Download or clone the repository.
+1. Download the .exe from the repository.
 
 ## Contributing
 Fork the repo, make changes, and submit a pull request. Report issues via GitHub.
