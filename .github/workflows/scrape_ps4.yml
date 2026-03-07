@@ -33,44 +33,32 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # Install Chrome + Xvfb
-      - name: Install Google Chrome stable & Xvfb
-        run: |
-          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt-get install -y /tmp/chrome.deb xvfb
-          CHROME_VER=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
-          echo "Chrome version: $CHROME_VER"
-          echo "CHROME_VER=$CHROME_VER" >> $GITHUB_ENV
+      # Install Xvfb for virtual display
+      - name: Install Xvfb
+        run: sudo apt-get install -y -qq xvfb
 
-      # Download the ChromeDriver that exactly matches the installed Chrome
-      - name: Install matching ChromeDriver
+      # Install Chrome + ChromeDriver as a matched pair from Chrome for Testing.
+      # undetected-chromedriver queries the CfT API for the latest stable driver
+      # version — so we install that exact Chrome version too, guaranteeing a match.
+      - name: Install Chrome for Testing + ChromeDriver (matched pair)
         run: |
-          MAJOR=$(echo $CHROME_VER | cut -d. -f1)
-          echo "Chrome major: $MAJOR"
-          # Use Chrome for Testing JSON endpoint to get exact matching driver URL
-          DRIVER_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json" \
-            | python3 -c "
-          import json,sys
-          data = json.load(sys.stdin)
-          ver = '$CHROME_VER'
-          for v in reversed(data['versions']):
-              if v['version'] == ver:
-                  for d in v.get('downloads',{}).get('chromedriver',[]):
-                      if d['platform'] == 'linux64':
-                          print(d['url'])
-                          sys.exit(0)
-          # fallback: find closest version with same major
-          for v in reversed(data['versions']):
-              if v['version'].split('.')[0] == ver.split('.')[0]:
-                  for d in v.get('downloads',{}).get('chromedriver',[]):
-                      if d['platform'] == 'linux64':
-                          print(d['url'])
-                          sys.exit(0)
-          ")
-          echo "ChromeDriver URL: $DRIVER_URL"
+          # Get the latest stable Chrome for Testing version
+          STABLE=$(curl -s https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['channels']['Stable']['version'])")
+          echo "Chrome for Testing stable: $STABLE"
+
+          # Download Chrome for Testing (linux64)
+          CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public/${STABLE}/linux64/chrome-linux64.zip"
+          wget -q -O /tmp/chrome.zip "$CHROME_URL"
+          sudo unzip -q /tmp/chrome.zip -d /opt/
+          sudo ln -sf /opt/chrome-linux64/chrome /usr/local/bin/google-chrome
+          google-chrome --version
+
+          # Download matching ChromeDriver
+          DRIVER_URL="https://storage.googleapis.com/chrome-for-testing-public/${STABLE}/linux64/chromedriver-linux64.zip"
           wget -q -O /tmp/chromedriver.zip "$DRIVER_URL"
-          unzip -q /tmp/chromedriver.zip -d /tmp/chromedriver_extracted
-          sudo mv $(find /tmp/chromedriver_extracted -name 'chromedriver' -type f) /usr/local/bin/chromedriver
+          unzip -q /tmp/chromedriver.zip -d /tmp/
+          sudo mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
           sudo chmod +x /usr/local/bin/chromedriver
           chromedriver --version
 
