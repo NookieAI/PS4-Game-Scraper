@@ -51,6 +51,21 @@ jobs:
           sudo apt-get install -y /tmp/chrome.deb
           echo "Installed: $(google-chrome --version)"
 
+      # Pin ChromeDriver to the installed Chrome version
+      # undetected_chromedriver caches the driver in ~/.local/share/undetected_chromedriver/
+      - name: Pin ChromeDriver to installed Chrome version
+        run: |
+          CHROME_MAJOR=$(google-chrome --version | awk '{print $3}' | cut -d. -f1)
+          echo "Chrome major version: $CHROME_MAJOR"
+          CHROME_MAJOR="$CHROME_MAJOR" python3 -c "
+import os
+import undetected_chromedriver as uc
+version = int(os.environ['CHROME_MAJOR'])
+patcher = uc.Patcher(version_main=version)
+patcher.auto()
+print('ChromeDriver pinned to version', version)
+"
+
       # Restore scraper cache files from R2 so the run is incremental
       - name: Restore cache from R2
         run: |
