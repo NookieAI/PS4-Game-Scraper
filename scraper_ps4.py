@@ -2551,6 +2551,28 @@ def discover_new_games(driver, known_urls: set) -> list:
         "article.post h2 a", ".post-title a", ".post.bar.hentry h2 a",
     ])
 
+    # ── Browser warm-up: load one known game page before discovery ───────────
+    # The category page gets a CF challenge when the browser session is cold
+    # (no prior navigations). Individual game pages don't get challenged, so
+    # loading one first establishes CF trust for the subsequent category fetch.
+    # We only do this once, before the first category loop iteration.
+    _warmup_done = False
+
+    def _warmup_browser(driver, known_urls):
+        """Load one known game page to establish CF session trust."""
+        # Pick any known URL — first one is fine, it just needs to be a real page
+        warmup_url = next(iter(known_urls), None)
+        if not warmup_url:
+            return
+        try:
+            print(f"  [warm-up] loading {warmup_url} to establish CF session...")
+            driver.get(warmup_url)
+            wait_for_cf(driver)
+            jitter(2, 0.3)
+            print(f"  [warm-up] done — title: {driver.title!r}")
+        except Exception as e:
+            print(f"  [warm-up] error (non-fatal): {e}")
+
     for cat_url in CATEGORY_URLS:
         print(f"  Scanning: {cat_url}")
         feed_base = cat_url.rstrip("/") + "/feed/"
@@ -2609,15 +2631,13 @@ def discover_new_games(driver, known_urls: set) -> list:
                     # then extract whatever links are present.
                     print(f"    Page {page_num}: requests got 0 — retrying via browser")
 
-                    # Warm up: load homepage to establish CF-trusted session
-                    try:
-                        current = driver.current_url or ""
-                        if "dlpsgame.com" not in current:
-                            driver.get("https://dlpsgame.com/")
-                            wait_for_cf(driver)   # no selector — just wait for title
-                            jitter(1.5, 0.3)
-                    except Exception:
-                        pass
+                    # Warm up: load a known game page to establish CF session trust.
+                    # This must happen before the category page — CF challenges the
+                    # category page when the session is cold but not individual game pages.
+                    nonlocal _warmup_done
+                    if not _warmup_done:
+                        _warmup_browser(driver, known_urls)
+                        _warmup_done = True
 
                     driver.get(page_url)
                     # Wait for CF to clear without requiring a selector —
