@@ -33,34 +33,44 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # Install Xvfb for virtual display
       - name: Install Xvfb
         run: sudo apt-get install -y -qq xvfb
 
-      # Install Chrome + ChromeDriver as a matched pair from Chrome for Testing.
-      # undetected-chromedriver queries the CfT API for the latest stable driver
-      # version — so we install that exact Chrome version too, guaranteeing a match.
+      # Remove ALL existing Chrome/Chromium so uc only finds our version
+      - name: Remove existing Chrome/Chromium
+        run: |
+          sudo apt-get remove -y --purge chromium-browser chromium google-chrome-stable 2>/dev/null || true
+          sudo rm -f /usr/bin/google-chrome /usr/bin/chromium-browser /usr/bin/chromium
+          sudo rm -rf ~/.local/share/undetected_chromedriver/
+          echo "Cleaned up old Chrome installs"
+
+      # Install Chrome for Testing v146 (matches what uc downloads as driver)
       - name: Install Chrome for Testing + ChromeDriver (matched pair)
         run: |
-          # Get the latest stable Chrome for Testing version
+          # Get latest stable version from CfT API (this is what uc queries too)
           STABLE=$(curl -s https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json \
             | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['channels']['Stable']['version'])")
-          echo "Chrome for Testing stable: $STABLE"
+          echo "Installing Chrome for Testing: $STABLE"
 
-          # Download Chrome for Testing (linux64)
+          # Chrome binary
           CHROME_URL="https://storage.googleapis.com/chrome-for-testing-public/${STABLE}/linux64/chrome-linux64.zip"
           wget -q -O /tmp/chrome.zip "$CHROME_URL"
           sudo unzip -q /tmp/chrome.zip -d /opt/
+          sudo ln -sf /opt/chrome-linux64/chrome /usr/bin/google-chrome
           sudo ln -sf /opt/chrome-linux64/chrome /usr/local/bin/google-chrome
-          google-chrome --version
+          sudo chmod +x /opt/chrome-linux64/chrome
+          echo "Chrome: $(google-chrome --version)"
 
-          # Download matching ChromeDriver
+          # ChromeDriver — same version, placed where uc looks first
           DRIVER_URL="https://storage.googleapis.com/chrome-for-testing-public/${STABLE}/linux64/chromedriver-linux64.zip"
           wget -q -O /tmp/chromedriver.zip "$DRIVER_URL"
           unzip -q /tmp/chromedriver.zip -d /tmp/
-          sudo mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
-          sudo chmod +x /usr/local/bin/chromedriver
-          chromedriver --version
+          # Put in uc's expected cache location so it doesn't re-download
+          mkdir -p ~/.local/share/undetected_chromedriver/
+          cp /tmp/chromedriver-linux64/chromedriver ~/.local/share/undetected_chromedriver/chromedriver
+          sudo cp /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+          sudo chmod +x /usr/local/bin/chromedriver ~/.local/share/undetected_chromedriver/chromedriver
+          echo "ChromeDriver: $(chromedriver --version)"
 
       - name: Restore cache from R2
         run: |
