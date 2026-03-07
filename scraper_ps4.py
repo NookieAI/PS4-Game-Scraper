@@ -2636,7 +2636,22 @@ def main():
     options.add_argument(f"--window-size={win_w},{win_h}")
     print(f"[browser] Window: {win_w}×{win_h} | Between-game sleep: {SLEEP_BETWEEN_GAMES}s")
 
-    driver = uc.Chrome(options=options)
+    # Detect the installed Chrome major version so uc downloads the matching
+    # ChromeDriver instead of always grabbing the latest (which may not match).
+    import subprocess as _subprocess
+    try:
+        _chrome_ver_str = _subprocess.check_output(
+            ["google-chrome", "--version"], text=True, stderr=_subprocess.DEVNULL
+        ).strip()
+        # e.g. "Google Chrome 145.0.7632.159" → 145
+        _chrome_major = int(_chrome_ver_str.split()[2].split(".")[0])
+    except Exception as _e:
+        print(f"[browser] WARNING: could not detect Chrome version ({_e}); letting uc pick")
+        _chrome_major = None
+
+    if _chrome_major:
+        print(f"[browser] Detected Chrome major version: {_chrome_major}")
+    driver = uc.Chrome(options=options, version_main=_chrome_major)
     driver.set_page_load_timeout(300)
     driver.set_script_timeout(120)   # 120 s for batch image Promise.all()
 
