@@ -90,14 +90,19 @@ jobs:
           echo "CHROME_PATH=/usr/bin/google-chrome" >> $GITHUB_ENV
 
       - name: Connect to PureVPN (WireGuard)
-        if: ${{ secrets.PUREVPN_WG_CONFIG != '' }}
         run: |
+          if [ -z "$PUREVPN_WG_CONFIG" ]; then
+            echo "PUREVPN_WG_CONFIG not set — skipping VPN"
+            exit 0
+          fi
           sudo apt-get install -y -qq wireguard-tools resolvconf
-          echo "${{ secrets.PUREVPN_WG_CONFIG }}" | sudo tee /etc/wireguard/purevpn.conf > /dev/null
+          echo "$PUREVPN_WG_CONFIG" | sudo tee /etc/wireguard/purevpn.conf > /dev/null
           sudo chmod 600 /etc/wireguard/purevpn.conf
           sudo wg-quick up purevpn
           echo "VPN connected — public IP:"
           curl -s https://api.ipify.org && echo
+        env:
+          PUREVPN_WG_CONFIG: ${{ secrets.PUREVPN_WG_CONFIG }}
 
       - name: Start Xvfb virtual display
         run: |
@@ -144,8 +149,15 @@ jobs:
         run: python upload_to_r2.py
 
       - name: Disconnect PureVPN
-        if: ${{ always() && secrets.PUREVPN_WG_CONFIG != '' }}
-        run: sudo wg-quick down purevpn 2>/dev/null || true
+        if: always()
+        run: |
+          if [ -z "$PUREVPN_WG_CONFIG" ]; then
+            echo "VPN was not connected — nothing to disconnect"
+            exit 0
+          fi
+          sudo wg-quick down purevpn 2>/dev/null || true
+        env:
+          PUREVPN_WG_CONFIG: ${{ secrets.PUREVPN_WG_CONFIG }}
 
       - name: Summary
         if: always()
