@@ -132,6 +132,8 @@ _req_session.headers.update({
     "Connection":      "keep-alive",
 })
 
+# Discovery uses the shared _req_session (VPN handles IP routing in CI).
+
 # ── INTERMEDIARY RATE LIMITER ─────────────────────────────────────────────────
 # downloadgameps3.net enforces strict rate limits (CF Error 1015 = temp IP ban).
 # This lock + timestamp ensures at least _INTER_MIN_GAP seconds between any two
