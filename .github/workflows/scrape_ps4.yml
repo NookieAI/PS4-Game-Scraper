@@ -39,47 +39,73 @@ jobs:
       # Remove any old Chromium/Chrome installs that might confuse uc
       - name: Remove old Chrome/Chromium
         run: |
-          sudo apt-get remove -y --purge chromium-browser chromium google-chrome-stable 2>/dev/null || true
-          sudo rm -f /usr/bin/chromium-browser /usr/bin/chromium /usr/bin/google-chrome
-          echo "Done removing old Chrome/Chromium"
+          sudo apt-get remove -y --purge chromium-browser chromium 2>/dev/null || true
+          sudo rm -f /usr/bin/chromium-browser /usr/bin/chromium
+          echo "Done removing old Chromium"
 
-      # Install Chrome for Testing (stable) + matching ChromeDriver in one step.
-      # This guarantees version parity — the JSON endpoint always ships both together.
-      # Chrome runs NON-HEADLESS via Xvfb (already started before this step runs) —
-      # Cloudflare detects headless mode, so we must use a real display.
-      - name: Install Chrome for Testing + ChromeDriver (stable, non-headless)
+      # Install REAL Google Chrome Stable — NOT Chrome for Testing.
+      # CfT has a different browser fingerprint that Cloudflare detects.
+      # This .deb gives the same binary that ships to real users (same as Windows PC).
+      - name: Install Google Chrome stable (real user binary)
         run: |
-          # Fetch the stable channel JSON (version + download URLs)
-          JSON=$(curl -sS https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json)
-
-          # Extract Chrome + ChromeDriver linux64 URLs and version
-          CHROME_URL=$(echo "$JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(x['url'] for x in d['channels']['Stable']['downloads']['chrome'] if x['platform']=='linux64'))")
-          DRIVER_URL=$(echo "$JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(x['url'] for x in d['channels']['Stable']['downloads']['chromedriver'] if x['platform']=='linux64'))")
-          CHROME_VER=$(echo "$JSON" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['channels']['Stable']['version'])")
-          CHROME_MAJOR=$(echo "$CHROME_VER" | cut -d. -f1)
-
-          echo "Chrome for Testing version: $CHROME_VER (major: $CHROME_MAJOR)"
-
-          # Install Chrome for Testing binary
-          wget -q -O /tmp/chrome.zip "$CHROME_URL"
-          unzip -q /tmp/chrome.zip -d /tmp/cft-chrome/
-          sudo mv /tmp/cft-chrome/chrome-linux64 /opt/chrome-for-testing
-          sudo chmod +x /opt/chrome-for-testing/chrome
-          # Required shared libraries for Chrome for Testing on Ubuntu
-          sudo apt-get install -y -qq libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2
-          sudo ln -sf /opt/chrome-for-testing/chrome /usr/bin/google-chrome
+          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y /tmp/chrome.deb
           echo "Installed: $(google-chrome --version)"
 
-          # Install matching ChromeDriver → place where undetected_chromedriver looks first
+      # Download ChromeDriver that exactly matches the installed Chrome version.
+      # Uses Google's CfT JSON API to find the right driver for real Chrome.
+      # Places binary where undetected_chromedriver looks first (no runtime download).
+      - name: Install matching ChromeDriver
+        run: |
+          CHROME_FULL=$(google-chrome --version | grep -oP '[\d.]+')
+          CHROME_MAJOR=$(echo "$CHROME_FULL" | cut -d. -f1)
+          echo "Chrome: $CHROME_FULL  (major: $CHROME_MAJOR)"
+
+          CFT_URL="https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json"
+          DRIVER_URL=$(python3 - <<PYEOF
+import urllib.request, json, sys
+major = "$CHROME_MAJOR"
+full  = "$CHROME_FULL"
+data  = json.loads(urllib.request.urlopen("$CFT_URL").read())
+versions = data.get("versions", [])
+best = None
+for v in versions:
+    if v["version"] == full:
+        best = v; break
+if best is None:
+    for v in reversed(versions):
+        if v["version"].split(".")[0] == major:
+            best = v; break
+if best is None:
+    sys.exit(f"No ChromeDriver found for Chrome {full}")
+downloads = best.get("downloads", {}).get("chromedriver", [])
+for d in downloads:
+    if d.get("platform") == "linux64":
+        print(d["url"]); sys.exit(0)
+sys.exit(f"No linux64 chromedriver in downloads for Chrome {full}")
+PYEOF
+          )
+
+          echo "Downloading ChromeDriver from: $DRIVER_URL"
           wget -q -O /tmp/chromedriver.zip "$DRIVER_URL"
-          unzip -q /tmp/chromedriver.zip -d /tmp/cft-driver/
+          unzip -q /tmp/chromedriver.zip -d /tmp/cft/
+          DRIVER_BIN=$(find /tmp/cft/ -name chromedriver -type f | head -1)
+          if [ -z "$DRIVER_BIN" ]; then echo "ERROR: chromedriver binary not found after unzip"; exit 1; fi
+
           UC_DIR="$HOME/.local/share/undetected_chromedriver"
           mkdir -p "$UC_DIR"
-          cp /tmp/cft-driver/chromedriver-linux64/chromedriver "$UC_DIR/chromedriver"
+          cp "$DRIVER_BIN" "$UC_DIR/chromedriver"
           chmod +x "$UC_DIR/chromedriver"
           echo "ChromeDriver installed: $($UC_DIR/chromedriver --version)"
 
-          # Export the chromedriver path so scraper_ps4.py uses it directly (no auto-download)
+          # Verify major versions match — mismatch = scraper crash at startup
+          DRIVER_MAJOR=$($UC_DIR/chromedriver --version | grep -oP '[\d]+' | head -1)
+          if [ "$CHROME_MAJOR" != "$DRIVER_MAJOR" ]; then
+            echo "ERROR: Chrome major $CHROME_MAJOR != ChromeDriver major $DRIVER_MAJOR"
+            exit 1
+          fi
+          echo "✓ Version match confirmed: Chrome $CHROME_MAJOR = ChromeDriver $DRIVER_MAJOR"
+
           echo "CHROMEDRIVER_PATH=$UC_DIR/chromedriver" >> $GITHUB_ENV
 
       # Restore scraper cache files from R2 so the run is incremental
@@ -125,7 +151,7 @@ jobs:
       - name: Summary
         if: always()
         run: |
-          echo "── games.json ────────────────────"
+          echo "── games.json ───���────────────────"
           wc -c games.json 2>/dev/null || echo "not found"
           echo "── games_cache.json ──────────────"
           python -c "
