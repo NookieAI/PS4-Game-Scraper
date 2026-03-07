@@ -36,27 +36,13 @@ jobs:
       - name: Install Xvfb
         run: sudo apt-get install -y -qq xvfb
 
-      # Use the official setup-chrome action — installs a matched Chrome + ChromeDriver pair.
-      # Guarantees version parity; no manual patching or CfT API lookups needed.
-      - name: Install Chrome + matching ChromeDriver
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-        id: setup-chrome
-
-      - name: Verify Chrome + ChromeDriver versions
+      # Install Google Chrome stable — uc will auto-download the matching
+      # ChromeDriver at runtime (same behaviour as on a local Windows machine).
+      - name: Install Google Chrome stable
         run: |
-          echo "Chrome:       ${{ steps.setup-chrome.outputs.chrome-version }}"
-          echo "ChromeDriver: $(chromedriver --version)"
-
-      # Pre-populate uc's driver cache so it never tries to download a different version
-      - name: Lock ChromeDriver into uc cache
-        run: |
-          UC_DIR="$HOME/.local/share/undetected_chromedriver"
-          mkdir -p "$UC_DIR"
-          cp "$(which chromedriver)" "$UC_DIR/chromedriver"
-          chmod +x "$UC_DIR/chromedriver"
-          echo "Locked: $($UC_DIR/chromedriver --version)"
+          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y /tmp/chrome.deb
+          echo "Installed: $(google-chrome --version)"
 
       # Restore scraper cache files from R2 so the run is incremental
       - name: Restore cache from R2
