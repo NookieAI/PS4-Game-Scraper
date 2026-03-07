@@ -93,8 +93,7 @@ jobs:
 
       # ── PureVPN via WireGuard ────────────────────────────────────────────────
       - name: Connect to PureVPN (WireGuard)
-        if: secrets.PUREVPN_WG_CONFIG != ''   # ✅ Fixed — removed ${{ }}
-        run: |
+          if: secrets.PUREVPN_WG_CONFIG != ''        run: |
           sudo apt-get install -y -qq wireguard-tools resolvconf
           echo "${{ secrets.PUREVPN_WG_CONFIG }}" | sudo tee /etc/wireguard/purevpn.conf > /dev/null
           sudo chmod 600 /etc/wireguard/purevpn.conf
@@ -152,7 +151,7 @@ jobs:
 
       # ── Disconnect VPN ──────────────────────────────────────────────────────
       - name: Disconnect PureVPN
-        if: always() && secrets.PUREVPN_WG_CONFIG != ''   # ✅ Fixed — removed ${{ }}
+        if: always() && secrets.PUREVPN_WG_CONFIG != ''
         run: sudo wg-quick down purevpn 2>/dev/null || true
 
       # ── Summary ─────────────────────────────────────────────────────────────
