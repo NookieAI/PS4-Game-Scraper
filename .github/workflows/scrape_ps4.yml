@@ -36,70 +36,27 @@ jobs:
       - name: Install Xvfb
         run: sudo apt-get install -y -qq xvfb
 
-      # Remove any old Chromium/Chrome installs that might confuse uc
-      - name: Remove old Chrome/Chromium
+      # Use the official setup-chrome action — installs a matched Chrome + ChromeDriver pair.
+      # Guarantees version parity; no manual patching or CfT API lookups needed.
+      - name: Install Chrome + matching ChromeDriver
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+        id: setup-chrome
+
+      - name: Verify Chrome + ChromeDriver versions
         run: |
-          sudo apt-get remove -y --purge chromium-browser chromium 2>/dev/null || true
-          sudo rm -f /usr/bin/chromium-browser /usr/bin/chromium
-          echo "Done removing old Chromium"
+          echo "Chrome:       ${{ steps.setup-chrome.outputs.chrome-version }}"
+          echo "ChromeDriver: $(chromedriver --version)"
 
-      # Install Google Chrome stable directly from Google
-      # This gives us a properly versioned Chrome binary at /usr/bin/google-chrome
-      - name: Install Google Chrome stable
+      # Pre-populate uc's driver cache so it never tries to download a different version
+      - name: Lock ChromeDriver into uc cache
         run: |
-          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt-get install -y /tmp/chrome.deb
-          echo "Installed: $(google-chrome --version)"
-
-      # Download ChromeDriver that exactly matches the installed Chrome version.
-      # Uses Google's official Chrome for Testing JSON API (Chrome 115+).
-      # Places the binary where undetected_chromedriver looks first:
-      #   ~/.local/share/undetected_chromedriver/chromedriver
-      - name: Install matching ChromeDriver
-        run: |
-          CHROME_FULL=$(google-chrome --version | grep -oP '[\d.]+')
-          CHROME_MAJOR=$(echo "$CHROME_FULL" | cut -d. -f1)
-          echo "Chrome: $CHROME_FULL  (major: $CHROME_MAJOR)"
-
-          CFT_URL="https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json"
-          DRIVER_URL=$(python3 - <<PYEOF
-import urllib.request, json, sys
-major = "$CHROME_MAJOR"
-full  = "$CHROME_FULL"
-data  = json.loads(urllib.request.urlopen("$CFT_URL").read())
-versions = data.get("versions", [])
-best = None
-for v in versions:
-    if v["version"] == full:
-        best = v; break
-if best is None:
-    for v in reversed(versions):
-        if v["version"].split(".")[0] == major:
-            best = v; break
-if best is None:
-    sys.exit(f"No ChromeDriver found for Chrome {full}")
-downloads = best.get("downloads", {}).get("chromedriver", [])
-for d in downloads:
-    if d.get("platform") == "linux64":
-        print(d["url"]); sys.exit(0)
-sys.exit(f"No linux64 chromedriver in downloads for Chrome {full}")
-PYEOF
-          )
-
-          echo "Downloading ChromeDriver from: $DRIVER_URL"
-          wget -q -O /tmp/chromedriver.zip "$DRIVER_URL"
-          unzip -q /tmp/chromedriver.zip -d /tmp/cft/
-          DRIVER_BIN=$(find /tmp/cft/ -name chromedriver -type f | head -1)
-          if [ -z "$DRIVER_BIN" ]; then echo "ERROR: chromedriver binary not found after unzip"; exit 1; fi
-
           UC_DIR="$HOME/.local/share/undetected_chromedriver"
           mkdir -p "$UC_DIR"
-          cp "$DRIVER_BIN" "$UC_DIR/chromedriver"
+          cp "$(which chromedriver)" "$UC_DIR/chromedriver"
           chmod +x "$UC_DIR/chromedriver"
-          echo "ChromeDriver installed: $($UC_DIR/chromedriver --version)"
-
-          # Export the path so scraper_ps4.py can pass it as driver_executable_path
-          echo "CHROMEDRIVER_PATH=$UC_DIR/chromedriver" >> $GITHUB_ENV
+          echo "Locked: $($UC_DIR/chromedriver --version)"
 
       # Restore scraper cache files from R2 so the run is incremental
       - name: Restore cache from R2
