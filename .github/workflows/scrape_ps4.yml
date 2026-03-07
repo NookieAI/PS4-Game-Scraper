@@ -93,7 +93,8 @@ jobs:
 
       # ── PureVPN via WireGuard ────────────────────────────────────────────────
       - name: Connect to PureVPN (WireGuard)
-          if: secrets.PUREVPN_WG_CONFIG != ''        run: |
+        if: secrets.PUREVPN_WG_CONFIG != ''        
+        run: |
           sudo apt-get install -y -qq wireguard-tools resolvconf
           echo "${{ secrets.PUREVPN_WG_CONFIG }}" | sudo tee /etc/wireguard/purevpn.conf > /dev/null
           sudo chmod 600 /etc/wireguard/purevpn.conf
