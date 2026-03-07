@@ -36,7 +36,7 @@ jobs:
       - name: Install Xvfb
         run: sudo apt-get install -y -qq xvfb
 
-      # Remove ALL old Chrome/Chromium so only our version exists
+      # Remove ALL old Chrome so only our version exists on this runner
       - name: Remove existing Chrome/Chromium
         run: |
           sudo apt-get remove -y --purge chromium-browser chromium google-chrome-stable 2>/dev/null || true
@@ -44,82 +44,41 @@ jobs:
           sudo rm -rf ~/.local/share/undetected_chromedriver/
           echo "Cleaned old Chrome installs"
 
-      # Install Chrome for Testing + matching ChromeDriver (same version = no mismatch ever)
-      - name: Install Chrome for Testing + ChromeDriver
+      # Install google-chrome-stable from Google's apt repo (official, always latest stable)
+      - name: Install Google Chrome stable (from Google apt repo)
         run: |
-          STABLE=$(curl -s https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json \
-            | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['channels']['Stable']['version'])")
-          echo "CfT Stable version: $STABLE"
-          echo "CFT_VERSION=$STABLE" >> $GITHUB_ENV
+          curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update -qq
+          sudo apt-get install -y google-chrome-stable
+          CHROME_MAJOR=$(google-chrome --version | grep -oP '\d+' | head -1)
+          echo "Chrome major version: $CHROME_MAJOR"
+          echo "CHROME_MAJOR=$CHROME_MAJOR" >> $GITHUB_ENV
 
-          # Chrome binary
-          wget -q -O /tmp/chrome.zip "https://storage.googleapis.com/chrome-for-testing-public/${STABLE}/linux64/chrome-linux64.zip"
-          sudo unzip -q /tmp/chrome.zip -d /opt/
-          sudo chmod +x /opt/chrome-linux64/chrome
-          sudo ln -sf /opt/chrome-linux64/chrome /usr/bin/google-chrome
-          echo "Chrome: $(google-chrome --version)"
-
-          # ChromeDriver — place in uc's cache dir so it uses it directly
-          wget -q -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${STABLE}/linux64/chromedriver-linux64.zip"
-          unzip -q /tmp/chromedriver.zip -d /tmp/
-          mkdir -p ~/.local/share/undetected_chromedriver/
-          cp /tmp/chromedriver-linux64/chromedriver ~/.local/share/undetected_chromedriver/chromedriver
-          sudo cp /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
-          sudo chmod +x /usr/local/bin/chromedriver
-          chmod +x ~/.local/share/undetected_chromedriver/chromedriver
-          echo "ChromeDriver: $(chromedriver --version)"
-          echo "CHROMEDRIVER_PATH=$HOME/.local/share/undetected_chromedriver/chromedriver" >> $GITHUB_ENV
-
-      # Patch scraper_ps4.py to pass driver_executable_path and binary_location
-      # so uc.Chrome() uses exactly what we installed — no auto-download
-      - name: Patch scraper to use installed Chrome + ChromeDriver
+      # Patch scraper_ps4.py to pass version_main to uc.Chrome()
+      # This tells uc exactly which ChromeDriver version to download — matching Chrome
+      - name: Patch scraper — pass version_main to uc.Chrome()
         run: |
           python3 - <<'PYEOF'
-          import re
           from pathlib import Path
+          import re, os
 
           src = Path("scraper_ps4.py").read_text()
+          major = os.environ.get("CHROME_MAJOR", "")
 
-          # Patch 1: inject binary_location and driver_executable_path into uc.Chrome() call
-          # Original: driver = uc.Chrome(options=options)
-          old = 'driver = uc.Chrome(options=options)'
-          new = (
-              'import os as _os\n'
-              '    _chrome_bin = _os.environ.get("CHROME_BINARY", "/usr/bin/google-chrome")\n'
-              '    _driver_bin = _os.environ.get("CHROMEDRIVER_PATH", "")\n'
-              '    options.binary_location = _chrome_bin\n'
-              '    driver = uc.Chrome(\n'
-              '        options=options,\n'
-              '        driver_executable_path=_driver_bin if _driver_bin else None,\n'
-              '        version_main=int(_chrome_bin and __import__("subprocess").check_output(\n'
-              '            [_chrome_bin, "--version"], text=True).split()[2].split(".")[0]) if _driver_bin else None,\n'
-              '    )'
-          )
+          old = "driver = uc.Chrome(options=options)"
+          new = f"driver = uc.Chrome(options=options, version_main={major})"
+
           if old in src:
-              src = src.replace(old, new)
-              Path("scraper_ps4.py").write_text(src)
-              print("✅ Patched uc.Chrome() call")
+              Path("scraper_ps4.py").write_text(src.replace(old, new))
+              print(f"✅ Patched: uc.Chrome(options=options, version_main={major})")
           else:
-              print("⚠️  Could not find uc.Chrome() call — applying fallback patch")
-              # Fallback: monkey-patch uc at import level via sitecustomize
-              sitecustom = Path("/opt/hostedtoolcache/Python/3.11.14/x64/lib/python3.11/sitecustomize.py")
-              sitecustom.write_text("""
-          import undetected_chromedriver as _uc
-          import os as _os
-          _orig_init = _uc.Chrome.__init__
-          def _patched_init(self, *a, **kw):
-              kw.setdefault("driver_executable_path", _os.environ.get("CHROMEDRIVER_PATH") or None)
-              if not kw.get("options"):
-                  kw["options"] = _uc.ChromeOptions()
-              kw["options"].binary_location = _os.environ.get("CHROME_BINARY", "/usr/bin/google-chrome")
-              _orig_init(self, *a, **kw)
-          _uc.Chrome.__init__ = _patched_init
-          """)
-              print("✅ Applied sitecustomize monkey-patch")
+              print("❌ Could not find 'driver = uc.Chrome(options=options)' in scraper_ps4.py")
+              print("Searching for actual call...")
+              for i, line in enumerate(src.splitlines(), 1):
+                  if "uc.Chrome(" in line:
+                      print(f"  Line {i}: {line.strip()}")
           PYEOF
-
-      - name: Set Chrome binary env var
-        run: echo "CHROME_BINARY=/usr/bin/google-chrome" >> $GITHUB_ENV
 
       - name: Restore cache from R2
         run: |
