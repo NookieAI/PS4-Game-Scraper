@@ -2,6 +2,16 @@
 upload_to_r2.py — sync scraper outputs to Cloudflare R2
 Reads creds from env vars: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
                            R2_ACCOUNT_ID, R2_BUCKET
+
+R2 key layout (matches existing bucket structure):
+  games.json
+  games_cache.json
+  {game-slug}/cover.jpg
+  {game-slug}/screenshot_1.jpg
+  ...
+
+The local screenshots/ prefix is stripped so files land at the bucket
+root level inside their game slug folder, not under screenshots/.
 """
 import os, hashlib, mimetypes, sys
 from pathlib import Path
@@ -27,6 +37,8 @@ s3 = boto3.client(
     region_name="auto",
 )
 
+SCREENSHOTS_DIR = Path("screenshots")
+
 def md5(path: Path) -> str:
     h = hashlib.md5()
     with open(path, "rb") as f:
@@ -50,6 +62,8 @@ def upload(local: Path, key: str):
     s3.upload_file(str(local), R2_BUCKET, key, ExtraArgs={"ContentType": ct})
 
 uploaded = 0
+
+# ── JSON outputs ──────────────────────────────────────────────────────────────
 for name in ["games.json", "games_cache.json"]:
     p = Path(name)
     if p.exists():
@@ -58,12 +72,20 @@ for name in ["games.json", "games_cache.json"]:
     else:
         print(f"  missing: {name}")
 
-shots = Path("screenshots")
-if shots.exists():
-    for f in sorted(shots.rglob("*")):
-        if f.is_file():
-            upload(f, str(f).replace("\\", "/"))
-            uploaded += 1
+# ── Screenshots ───────────────────────────────────────────────────────────────
+# Strip the local "screenshots/" prefix so the R2 key is just:
+#   {game-slug}/cover.jpg
+#   {game-slug}/screenshot_1.jpg
+# This matches the existing bucket structure (no screenshots/ prefix in R2).
+if SCREENSHOTS_DIR.exists():
+    for f in sorted(SCREENSHOTS_DIR.rglob("*")):
+        if not f.is_file():
+            continue
+        # e.g. screenshots/0-degrees-ps4-pkg/cover.jpg → 0-degrees-ps4-pkg/cover.jpg
+        relative_key = f.relative_to(SCREENSHOTS_DIR)
+        key = str(relative_key).replace("\\", "/")
+        upload(f, key)
+        uploaded += 1
 else:
     print("  screenshots/ not found — skipping")
 
