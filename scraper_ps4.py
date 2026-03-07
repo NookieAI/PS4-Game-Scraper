@@ -2599,10 +2599,36 @@ def discover_new_games(driver, known_urls: set) -> list:
                 if not raw_links:
                     rss_working = False   # both rss and requests failed
                     # ── Strategy 3: UC browser ───────────────────────────────
+                    # The browser successfully loads individual game pages but
+                    # the category page CF challenge times out when we wait for
+                    # the specific post-title selector.
+                    # Fix: (a) warm up the session on the homepage so CF trusts
+                    # our cookies, (b) navigate to the category page, (c) wait
+                    # for CF to clear WITHOUT requiring a specific selector —
+                    # just wait until the title is no longer "Just a moment",
+                    # then extract whatever links are present.
                     print(f"    Page {page_num}: requests got 0 — retrying via browser")
+
+                    # Warm up: load homepage to establish CF-trusted session
+                    try:
+                        current = driver.current_url or ""
+                        if "dlpsgame.com" not in current:
+                            driver.get("https://dlpsgame.com/")
+                            wait_for_cf(driver)   # no selector — just wait for title
+                            jitter(1.5, 0.3)
+                    except Exception:
+                        pass
+
                     driver.get(page_url)
-                    wait_for_cf(driver, require_selector="h2.post-title")
-                    jitter(1, 0.4)
+                    # Wait for CF to clear without requiring a selector —
+                    # avoids false timeout when the page loads but selector
+                    # is slow to render or uses a different class.
+                    cf_cleared = wait_for_cf(driver)
+                    if not cf_cleared:
+                        # CF didn't clear, but try to extract anyway — sometimes
+                        # the page renders fine even after a "timeout"
+                        pass
+                    jitter(2, 0.4)
                     raw_links = driver.execute_script(_JS_EXTRACT) or []
                     if not raw_links:
                         time.sleep(3)
@@ -2617,7 +2643,15 @@ def discover_new_games(driver, known_urls: set) -> list:
                     used_browser = True
 
                 if not raw_links:
-                    print(f"    Page {page_num}: no entries found — stopping")
+                    print(f"    Page {page_num}: no entries found (all strategies failed) — stopping")
+                    # Print page title and snippet to help diagnose CF issues
+                    if used_browser:
+                        try:
+                            print(f"    [DEBUG] browser title: {driver.title!r}")
+                            snippet = driver.page_source[:400].replace("\n", " ")
+                            print(f"    [DEBUG] page start: {snippet!r}")
+                        except Exception:
+                            pass
                     break
 
                 source_label = "browser" if used_browser else "requests"
