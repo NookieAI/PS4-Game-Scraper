@@ -2384,17 +2384,107 @@ def patch_entry(entry: dict, driver,
     return entry
 
 # ── NEW-GAME DISCOVERY ────────────────────────────────────────────────────────
+
+def _norm_href(href: str) -> str:
+    """Normalise a game URL to a canonical trailing-slash form."""
+    return href.split("?")[0].split("#")[0].rstrip("/") + "/"
+
+
+def _is_game_href(href: str) -> bool:
+    """Return True only for actual game-page URLs (skip category/tag/etc)."""
+    return ("dlpsgame.com/" in href and
+            not any(x in href for x in ["/category/", "/tag/", "/page/",
+                                         "/author/", "/feed/", "wp-", "?", "#"]))
+
+
+def _discover_via_rss(feed_url: str, known_urls: set) -> tuple:
+    """
+    Fetch one page of a WordPress RSS feed and return (results, hit_known).
+
+    WordPress RSS feeds are served as plain XML — Cloudflare almost never
+    challenges them, making this far more reliable than fetching category
+    HTML pages from a GitHub Actions runner.
+
+    Returns:
+        results   – list of {"title": str, "url": str} for unseen games,
+                    in feed order (newest first).
+        hit_known – True if a known URL was encountered (caller should stop
+                    paginating).
+    """
+    try:
+        hdrs = {**FETCH_HEADERS,
+                "Accept": "application/rss+xml, application/xml, text/xml, */*"}
+        r = _req_session.get(feed_url, headers=hdrs,
+                             timeout=FETCH_TIMEOUT, allow_redirects=True)
+        r.raise_for_status()
+        if _is_cf_challenge(r.text):
+            return [], False
+
+        # Use html.parser — tolerant of minor RSS quirks; lxml not guaranteed.
+        # Suppress the XMLParsedAsHTMLWarning that BS4 emits for RSS content.
+        import warnings
+        try:
+            from bs4 import XMLParsedAsHTMLWarning
+            warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+        except ImportError:
+            pass
+        soup = BeautifulSoup(r.content, "html.parser")
+        results   = []
+        hit_known = False
+
+        for item in soup.find_all("item"):
+            # WordPress <link> is a text node that follows a comment node;
+            # BeautifulSoup's .find("link") picks up the wrong node.
+            # <guid isPermaLink="true"> is the reliable permalink in WP RSS.
+            href = ""
+            guid = item.find("guid")
+            if guid:
+                is_permalink = guid.get("ispermalink", "true").lower()
+                if is_permalink != "false":
+                    href = (guid.get_text(strip=True))
+            if not href:
+                # Fallback: extract the URL-looking text from <link>
+                link_tag = item.find("link")
+                if link_tag:
+                    href = (link_tag.get_text(strip=True) or
+                            link_tag.next_sibling or "")
+                    href = str(href).strip()
+            if not href or not _is_game_href(href):
+                continue
+
+            href = _norm_href(href)
+            title_tag = item.find("title")
+            title = (title_tag.get_text(strip=True) if title_tag else "").strip()
+            # Strip CDATA wrapper that some parsers leave behind
+            if title.startswith("<![CDATA["):
+                title = title[9:].rstrip("]]>").strip()
+            if not title:
+                continue
+
+            if href in known_urls:
+                hit_known = True
+                break
+
+            results.append({"title": title, "url": href})
+
+        return results, hit_known
+
+    except Exception as e:
+        print(f"    [rss] fetch error: {e}")
+        return [], False
+
+
 def _discover_page_via_requests(page_url: str) -> list:
-    """Fetch a category page with requests and extract game links via BS4.
-    Returns list of (href, title) tuples, or empty list on failure."""
-    selectors = [
+    """Fetch a category HTML page with requests and extract game links via BS4.
+    Returns list of (href, title) tuples, or empty list on CF-block/failure.
+    Kept as a secondary fallback when RSS is unavailable."""
+    selectors_str = ", ".join([
         ".blog-posts .post-title a",
         "h2.post-title.entry-title a",
         "h2.post-title a",
         ".entry-title a",
         ".post.bar.hentry h2 a",
-    ]
-    selectors_str = ", ".join(selectors)
+    ])
     try:
         hdrs = {**FETCH_HEADERS,
                 "Referer": "https://dlpsgame.com/",
@@ -2414,25 +2504,24 @@ def _discover_page_via_requests(page_url: str) -> list:
 
 def discover_new_games(driver, known_urls: set) -> list:
     """
-    Scrape PS4 category pages and collect new game URLs/titles,
-    stop at first known (already in JSON).
+    Collect new game URLs/titles from PS4 category pages, stopping as soon
+    as a known (already-scraped) URL is encountered.  Results are returned
+    in newest-first order so that prepending them to games[] preserves the
+    site's publication order.
 
-    Strategy: try requests first (fast, no CF issue on dlpsgame category pages).
-    Fall back to UC browser if requests returns 0 results (e.g. CF blocked).
+    Strategy (in priority order):
+      1. RSS feed  — CF never challenges plain XML feeds; fast and reliable
+                     on GitHub Actions runners where HTML category pages are
+                     typically blocked.
+      2. requests  — HTML category page via requests+BS4; works on local runs
+                     where CF trusts residential IPs.  Used only when RSS
+                     yields nothing at all (e.g. feed temporarily down).
+      3. UC browser — Last resort; navigates the category page through the
+                     undetected Chrome instance.  Slow and can still hit CF
+                     timeouts in CI, but keeps full-rebuild mode working.
     """
     new_games = []
     print("\n── New-game discovery (PS4) ──────────────────────────────────────────")
-
-    selectors_string = ", ".join([
-        ".blog-posts .post-title a",
-        "h2.post-title.entry-title a",
-        "h2.post-title a",
-        "h1.post-title a",
-        ".entry-title a",
-        "article.post h2 a",
-        ".post-title a",
-        ".post.bar.hentry h2 a",
-    ])
 
     _JS_EXTRACT = """
         var seen = {}, out = [];
@@ -2456,17 +2545,60 @@ def discover_new_games(driver, known_urls: set) -> list:
         return out;
     """
 
+    selectors_string = ", ".join([
+        ".blog-posts .post-title a", "h2.post-title.entry-title a",
+        "h2.post-title a", "h1.post-title a", ".entry-title a",
+        "article.post h2 a", ".post-title a", ".post.bar.hentry h2 a",
+    ])
+
     for cat_url in CATEGORY_URLS:
         print(f"  Scanning: {cat_url}")
+        feed_base = cat_url.rstrip("/") + "/feed/"
+
+        # ── Track whether RSS ever produced results for this category ─────────
+        rss_working = None   # None = untested, True/False after first attempt
+
         for page_num in range(1, MAX_DISCOVERY_PAGES + 1):
-            page_url = cat_url if page_num == 1 else f"{cat_url}page/{page_num}/"
+            page_url  = cat_url if page_num == 1 else f"{cat_url}page/{page_num}/"
+            feed_url  = feed_base if page_num == 1 else f"{feed_base}?paged={page_num}"
+
             try:
-                # ── Primary: requests + BS4 (fast, no browser CF issues) ──────
+                # ── Strategy 1: RSS feed ──────────────────────────────────────
+                rss_results, rss_hit_known = _discover_via_rss(feed_url, known_urls)
+
+                if rss_results or rss_hit_known:
+                    # RSS is working for this category
+                    rss_working = True
+                    page_new = 0
+                    for item in rss_results:
+                        new_games.append(item)
+                        known_urls.add(item["url"])
+                        page_new += 1
+                        print(f"    + {item['title']}")
+                    print(f"    Page {page_num} [rss]: {page_new} new game(s)")
+                    if rss_hit_known:
+                        print(f"    Page {page_num}: hit known game — stopping")
+                        break
+                    if page_new == 0:
+                        # Feed returned items but all were already known
+                        break
+                    continue   # on to next RSS page
+
+                # rss_results is empty and no hit_known — feed may be down or
+                # returned fewer items than expected (last page of feed).
+                if rss_working is True:
+                    # RSS was working previously → empty page = end of feed
+                    print(f"    Page {page_num} [rss]: empty — end of feed")
+                    break
+                # rss_working is None (first page) or False → try HTML fallbacks
+
+                # ── Strategy 2: requests + BS4 ───────────────────────────────
                 raw_links = _discover_page_via_requests(page_url)
                 used_browser = False
 
-                # ── Fallback: UC browser (when requests is CF-blocked) ────────
                 if not raw_links:
+                    rss_working = False   # both rss and requests failed
+                    # ── Strategy 3: UC browser ───────────────────────────────
                     print(f"    Page {page_num}: requests got 0 — retrying via browser")
                     driver.get(page_url)
                     wait_for_cf(driver, require_selector="h2.post-title")
@@ -2490,23 +2622,18 @@ def discover_new_games(driver, known_urls: set) -> list:
 
                 source_label = "browser" if used_browser else "requests"
                 hit_known = False
-                page_new   = 0
+                page_new  = 0
 
                 for href, title in raw_links:
-                    href_norm = href.split("?")[0].split("#")[0].rstrip("/")
-                    if not href_norm.endswith("/"):
-                        href_norm += "/"
-                    if any(x in href_norm for x in ["/category/", "/tag/", "/page/",
-                                                    "/author/", "?", "#"]):
+                    href = _norm_href(href)
+                    if not _is_game_href(href):
                         continue
-                    if "dlpsgame.com/" not in href_norm:
-                        continue
-                    if href_norm in known_urls:
+                    if href in known_urls:
                         print(f"    Page {page_num}: hit known '{title}' — stopping")
                         hit_known = True
                         break
-                    new_games.append({"title": title, "url": href_norm})
-                    known_urls.add(href_norm)
+                    new_games.append({"title": title, "url": href})
+                    known_urls.add(href)
                     page_new += 1
                     print(f"    + {title}")
 
