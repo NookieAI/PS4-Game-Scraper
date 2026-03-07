@@ -96,6 +96,35 @@ jobs:
           echo "CHROMEDRIVER_PATH=/usr/local/bin/chromedriver" >> $GITHUB_ENV
           echo "CHROME_PATH=/usr/bin/google-chrome" >> $GITHUB_ENV
 
+      # ── PureVPN via WireGuard ────────────────────────────────────────────────
+      # Connects the runner to PureVPN so ALL requests (browser + HTTP) come
+      # from a residential/VPN IP that CF trusts.
+      #
+      # Setup (one-time):
+      #   1. Log in to purevpn.com → Members Area → Manual Configuration
+      #   2. Select WireGuard protocol, choose any server (e.g. United States)
+      #   3. Download the .conf file
+      #   4. Add the ENTIRE .conf file contents as GitHub secret: PUREVPN_WG_CONFIG
+      #
+      # The secret looks like:
+      #   [Interface]
+      #   PrivateKey = <your-key>
+      #   Address = 10.x.x.x/32
+      #   DNS = 8.8.8.8
+      #   [Peer]
+      #   PublicKey = <server-key>
+      #   Endpoint = <server-ip>:51820
+      #   AllowedIPs = 0.0.0.0/0
+      - name: Connect to PureVPN (WireGuard)
+        if: ${{ secrets.PUREVPN_WG_CONFIG != '' }}
+        run: |
+          sudo apt-get install -y -qq wireguard-tools resolvconf
+          echo "${{ secrets.PUREVPN_WG_CONFIG }}" | sudo tee /etc/wireguard/purevpn.conf > /dev/null
+          sudo chmod 600 /etc/wireguard/purevpn.conf
+          sudo wg-quick up purevpn
+          echo "VPN connected — public IP:"
+          curl -s https://api.ipify.org && echo
+
       # ── Virtual display (non-headless — CF detects headless) ────────────────
       - name: Start Xvfb virtual display
         run: |
@@ -143,6 +172,11 @@ jobs:
       - name: Upload results to R2
         if: always()
         run: python upload_to_r2.py
+
+      # ── Disconnect VPN ──────────────────────────────────────────────────────
+      - name: Disconnect PureVPN
+        if: always() && ${{ secrets.PUREVPN_WG_CONFIG != '' }}
+        run: sudo wg-quick down purevpn 2>/dev/null || true
 
       # ── Summary ─────────────────────────────────────────────────────────────
       - name: Summary
