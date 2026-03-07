@@ -36,13 +36,73 @@ jobs:
       - name: Install Xvfb
         run: sudo apt-get install -y -qq xvfb
 
-      # Install Google Chrome stable — uc will auto-download the matching
-      # ChromeDriver at runtime (same behaviour as on a local Windows machine).
-      - name: Install Google Chrome stable
+      # ── Install Chrome + ChromeDriver from the SAME CfT Stable release ─────
+      # Both binaries come from the same Google CfT release → exact version match.
+      - name: Install Chrome + ChromeDriver (matched pair from CfT Stable)
         run: |
-          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt-get install -y /tmp/chrome.deb
-          echo "Installed: $(google-chrome --version)"
+          CfT_INFO=$(curl -fsSL "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json")
+
+          CHROME_URL=$(echo "$CfT_INFO" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          stable = data['channels']['Stable']
+          for d in stable['downloads']['chrome']:
+              if d['platform'] == 'linux64':
+                  print(d['url'])
+                  break
+          ")
+
+          DRIVER_URL=$(echo "$CfT_INFO" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          stable = data['channels']['Stable']
+          for d in stable['downloads']['chromedriver']:
+              if d['platform'] == 'linux64':
+                  print(d['url'])
+                  break
+          ")
+
+          CHROME_VERSION=$(echo "$CfT_INFO" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          print(data['channels']['Stable']['version'])
+          ")
+
+          echo "CfT Stable version: $CHROME_VERSION"
+          echo "Chrome URL:       $CHROME_URL"
+          echo "ChromeDriver URL: $DRIVER_URL"
+
+          # Install Chrome from CfT zip
+          wget -q -O /tmp/chrome-linux64.zip "$CHROME_URL"
+          unzip -q /tmp/chrome-linux64.zip -d /tmp/chrome-linux64/
+          CHROME_BIN=$(find /tmp/chrome-linux64/ -name chrome -type f | head -1)
+          sudo mv "$CHROME_BIN" /usr/local/bin/google-chrome
+          sudo chmod +x /usr/local/bin/google-chrome
+          # Runtime dependencies for Chrome on Ubuntu runner
+          sudo apt-get install -y -qq \
+            libglib2.0-0 libnss3 libfontconfig1 libxss1 \
+            libxtst6 libxrandr2 libxi6 libpangocairo-1.0-0 libatk1.0-0 \
+            libatk-bridge2.0-0 libcups2 libdrm2 libgbm1 libasound2t64 \
+            libgtk-3-0 libx11-xcb1 libxcomposite1 libxdamage1 libxfixes3 \
+            libvulkan1 2>/dev/null || true
+          echo "Chrome installed: $(google-chrome --version)"
+
+          # Install ChromeDriver — put it where uc looks first
+          wget -q -O /tmp/chromedriver-linux64.zip "$DRIVER_URL"
+          unzip -q /tmp/chromedriver-linux64.zip -d /tmp/chromedriver-linux64/
+          DRIVER_BIN=$(find /tmp/chromedriver-linux64/ -name chromedriver -type f | head -1)
+          UC_DIR="$HOME/.local/share/undetected_chromedriver"
+          mkdir -p "$UC_DIR"
+          cp "$DRIVER_BIN" "$UC_DIR/chromedriver"
+          chmod +x "$UC_DIR/chromedriver"
+          sudo cp "$DRIVER_BIN" /usr/local/bin/chromedriver
+          sudo chmod +x /usr/local/bin/chromedriver
+          echo "ChromeDriver installed: $($UC_DIR/chromedriver --version)"
+
+      - name: Verify Chrome + ChromeDriver versions match
+        run: |
+          echo "Chrome:      $(google-chrome --version)"
+          echo "ChromeDriver: $(chromedriver --version)"
 
       # Restore scraper cache files from R2 so the run is incremental
       - name: Restore cache from R2
