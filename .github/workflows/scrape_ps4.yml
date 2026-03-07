@@ -40,7 +40,8 @@ jobs:
         id: setup-chrome
         uses: browser-actions/setup-chrome@v1
         with:
-          chrome-version: stable   # latest stable build
+          chrome-version: stable
+          install-chromedriver: true   # ← installs matching ChromeDriver alongside Chrome
 
       - name: Confirm versions match
         run: |
