@@ -98,6 +98,9 @@ PYEOF
           chmod +x "$UC_DIR/chromedriver"
           echo "ChromeDriver installed: $($UC_DIR/chromedriver --version)"
 
+          # Export the path so scraper_ps4.py can pass it as driver_executable_path
+          echo "CHROMEDRIVER_PATH=$UC_DIR/chromedriver" >> $GITHUB_ENV
+
       # Restore scraper cache files from R2 so the run is incremental
       - name: Restore cache from R2
         run: |

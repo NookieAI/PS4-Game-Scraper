@@ -2656,7 +2656,16 @@ def main():
     if _chrome_major is None:
         print("[browser] WARNING: could not detect Chrome version — "
               "uc will auto-select ChromeDriver")
-    driver = uc.Chrome(options=options, version_main=_chrome_major)
+    # If CHROMEDRIVER_PATH is set (e.g. by CI), pass it as driver_executable_path
+    # so uc uses that exact binary and does NOT download a new one at runtime.
+    _driver_executable = os.environ.get("CHROMEDRIVER_PATH") or None
+    if _driver_executable:
+        print(f"[browser] Using pre-installed ChromeDriver: {_driver_executable}")
+    driver = uc.Chrome(
+        options=options,
+        version_main=_chrome_major,
+        driver_executable_path=_driver_executable,
+    )
     driver.set_page_load_timeout(300)
     driver.set_script_timeout(120)   # 120 s for batch image Promise.all()
 
