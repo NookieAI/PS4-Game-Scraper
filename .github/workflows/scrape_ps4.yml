@@ -37,9 +37,6 @@ jobs:
           google-chrome --version
 
       # ── Install the EXACT matching ChromeDriver via Chrome for Testing API ───
-      # Queries the CfT known-good-versions JSON for an entry matching the full
-      # Chrome version string (e.g. 145.0.7632.159), then downloads that
-      # ChromeDriver. This guarantees Chrome and ChromeDriver are always in sync.
       - name: Install matching ChromeDriver
         run: |
           CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
@@ -54,7 +51,6 @@ jobs:
           url = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json"
           data = json.loads(urllib.request.urlopen(url).read())
 
-          # Try exact version match first, then same major.minor.patch prefix
           prefixes = [chrome_ver, '.'.join(chrome_ver.split('.')[:3])]
           match = None
           for prefix in prefixes:
@@ -64,7 +60,6 @@ jobs:
                   break
 
           if not match:
-              # Fall back to latest entry for the same major version
               candidates = [v for v in data['versions'] if v['version'].startswith(major + '.')]
               match = candidates[-1] if candidates else None
 
@@ -97,26 +92,8 @@ jobs:
           echo "CHROME_PATH=/usr/bin/google-chrome" >> $GITHUB_ENV
 
       # ── PureVPN via WireGuard ────────────────────────────────────────────────
-      # Connects the runner to PureVPN so ALL requests (browser + HTTP) come
-      # from a residential/VPN IP that CF trusts.
-      #
-      # Setup (one-time):
-      #   1. Log in to purevpn.com → Members Area → Manual Configuration
-      #   2. Select WireGuard protocol, choose any server (e.g. United States)
-      #   3. Download the .conf file
-      #   4. Add the ENTIRE .conf file contents as GitHub secret: PUREVPN_WG_CONFIG
-      #
-      # The secret looks like:
-      #   [Interface]
-      #   PrivateKey = <your-key>
-      #   Address = 10.x.x.x/32
-      #   DNS = 8.8.8.8
-      #   [Peer]
-      #   PublicKey = <server-key>
-      #   Endpoint = <server-ip>:51820
-      #   AllowedIPs = 0.0.0.0/0
       - name: Connect to PureVPN (WireGuard)
-        if: ${{ secrets.PUREVPN_WG_CONFIG != '' }}
+        if: secrets.PUREVPN_WG_CONFIG != ''   # ✅ Fixed — removed ${{ }}
         run: |
           sudo apt-get install -y -qq wireguard-tools resolvconf
           echo "${{ secrets.PUREVPN_WG_CONFIG }}" | sudo tee /etc/wireguard/purevpn.conf > /dev/null
@@ -175,7 +152,7 @@ jobs:
 
       # ── Disconnect VPN ──────────────────────────────────────────────────────
       - name: Disconnect PureVPN
-        if: always() && ${{ secrets.PUREVPN_WG_CONFIG != '' }}
+        if: always() && secrets.PUREVPN_WG_CONFIG != ''   # ✅ Fixed — removed ${{ }}
         run: sudo wg-quick down purevpn 2>/dev/null || true
 
       # ── Summary ─────────────────────────────────────────────────────────────
