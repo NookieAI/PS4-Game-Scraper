@@ -2634,37 +2634,40 @@ def main():
     options = uc.ChromeOptions()
     options.headless = False
     options.add_argument(f"--window-size={win_w},{win_h}")
+
+    # ── CI environment detection ───────────────────────────────────────────────
+    # When running under GitHub Actions (CI=true), Chrome needs a few extra flags
+    # to work inside the sandboxed runner environment. These are NOT set on a
+    # normal Windows/Mac desktop run, so local behaviour is completely unchanged.
+    _running_in_ci = os.environ.get("CI", "").lower() in ("true", "1")
+    if _running_in_ci:
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+
+    # ── Chrome binary path (CI only) ──────────────────────────────────────────
+    # browser-actions/setup-chrome sets CHROME_PATH to the exact binary used by
+    # the paired ChromeDriver. Without this, uc may find the system Chrome
+    # (different version) first.
+    _chrome_bin = os.environ.get("CHROME_PATH") or os.environ.get("CHROME_BIN")
+    if _chrome_bin:
+        options.binary_location = _chrome_bin
+        print(f"[browser] Chrome binary: {_chrome_bin}")
+
     print(f"[browser] Window: {win_w}×{win_h} | Between-game sleep: {SLEEP_BETWEEN_GAMES}s")
 
-    # Detect the installed Chrome major version at runtime so uc downloads
-    # the matching ChromeDriver instead of always grabbing the latest.
-    import subprocess as _subprocess
-    _chrome_major = None
-    for _chrome_bin_candidate in ("google-chrome", "google-chrome-stable",
-                                   "chromium-browser", "chromium"):
-        try:
-            _ver_str = _subprocess.check_output(
-                [_chrome_bin_candidate, "--version"],
-                text=True, stderr=_subprocess.DEVNULL,
-            ).strip()
-            _chrome_major = int(_ver_str.split()[2].split(".")[0])
-            print(f"[browser] Detected Chrome ({_chrome_bin_candidate}) "
-                  f"major version: {_chrome_major}")
-            break
-        except Exception:
-            continue
-    if _chrome_major is None:
-        print("[browser] WARNING: could not detect Chrome version — "
-              "uc will auto-select ChromeDriver")
-    # If CHROMEDRIVER_PATH is set (e.g. by CI), pass it as driver_executable_path
-    # so uc uses that exact binary and does NOT download a new one at runtime.
-    _driver_executable = os.environ.get("CHROMEDRIVER_PATH") or None
-    if _driver_executable:
-        print(f"[browser] Using pre-installed ChromeDriver: {_driver_executable}")
+    # ── Driver init ───────────────────────────────────────────────────────────
+    # On Windows/Mac: uc auto-downloads and manages ChromeDriver — works as-is.
+    # In CI: we pass driver_executable_path so uc uses the pre-installed driver
+    #   from browser-actions/setup-chrome instead of auto-downloading one that
+    #   may be a different version. This is the fix for the 145/146 mismatch.
+    _chromedriver_path = os.environ.get("CHROMEDRIVER_PATH") or os.environ.get("CHROMEDRIVER")
+    if _chromedriver_path:
+        print(f"[browser] ChromeDriver: {_chromedriver_path}")
+
     driver = uc.Chrome(
         options=options,
-        version_main=_chrome_major,
-        driver_executable_path=_driver_executable,
+        driver_executable_path=_chromedriver_path if _chromedriver_path else None,
     )
     driver.set_page_load_timeout(300)
     driver.set_script_timeout(120)   # 120 s for batch image Promise.all()
