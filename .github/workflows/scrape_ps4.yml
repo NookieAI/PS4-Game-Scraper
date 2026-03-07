@@ -36,50 +36,22 @@ jobs:
       - name: Install Xvfb
         run: sudo apt-get install -y -qq xvfb
 
-      # Remove ALL old Chrome so only our version exists on this runner
-      - name: Remove existing Chrome/Chromium
+      # Remove any old Chromium/Chrome installs that might confuse uc
+      - name: Remove old Chrome/Chromium
         run: |
-          sudo apt-get remove -y --purge chromium-browser chromium google-chrome-stable 2>/dev/null || true
-          sudo rm -f /usr/bin/google-chrome /usr/bin/chromium-browser /usr/bin/chromium
-          sudo rm -rf ~/.local/share/undetected_chromedriver/
-          echo "Cleaned old Chrome installs"
+          sudo apt-get remove -y --purge chromium-browser chromium 2>/dev/null || true
+          sudo rm -f /usr/bin/chromium-browser /usr/bin/chromium
+          echo "Done removing old Chromium"
 
-      # Install google-chrome-stable from Google's apt repo (official, always latest stable)
-      - name: Install Google Chrome stable (from Google apt repo)
+      # Install Google Chrome stable directly from Google
+      # This gives us a properly versioned Chrome binary at /usr/bin/google-chrome
+      - name: Install Google Chrome stable
         run: |
-          curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg
-          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
-          sudo apt-get update -qq
-          sudo apt-get install -y google-chrome-stable
-          CHROME_MAJOR=$(google-chrome --version | grep -oP '\d+' | head -1)
-          echo "Chrome major version: $CHROME_MAJOR"
-          echo "CHROME_MAJOR=$CHROME_MAJOR" >> $GITHUB_ENV
+          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y /tmp/chrome.deb
+          echo "Installed: $(google-chrome --version)"
 
-      # Patch scraper_ps4.py to pass version_main to uc.Chrome()
-      # This tells uc exactly which ChromeDriver version to download — matching Chrome
-      - name: Patch scraper — pass version_main to uc.Chrome()
-        run: |
-          python3 - <<'PYEOF'
-          from pathlib import Path
-          import re, os
-
-          src = Path("scraper_ps4.py").read_text()
-          major = os.environ.get("CHROME_MAJOR", "")
-
-          old = "driver = uc.Chrome(options=options)"
-          new = f"driver = uc.Chrome(options=options, version_main={major})"
-
-          if old in src:
-              Path("scraper_ps4.py").write_text(src.replace(old, new))
-              print(f"✅ Patched: uc.Chrome(options=options, version_main={major})")
-          else:
-              print("❌ Could not find 'driver = uc.Chrome(options=options)' in scraper_ps4.py")
-              print("Searching for actual call...")
-              for i, line in enumerate(src.splitlines(), 1):
-                  if "uc.Chrome(" in line:
-                      print(f"  Line {i}: {line.strip()}")
-          PYEOF
-
+      # Restore scraper cache files from R2 so the run is incremental
       - name: Restore cache from R2
         run: |
           python - <<'PYEOF'
