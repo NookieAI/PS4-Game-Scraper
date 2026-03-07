@@ -18,11 +18,9 @@ jobs:
       R2_ENDPOINT:          https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
     steps:
-      # ── Repo ────────────────────────────────────────────────────────────────
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # ── Python ──────────────────────────────────────────────────────────────
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -31,70 +29,135 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ── Chrome + ChromeDriver (MATCHED PAIR — this is the key fix) ──────────
-      # browser-actions/setup-chrome installs a guaranteed-matched Chrome and
-      # ChromeDriver. The outputs.chromedriver-path and outputs.chrome-path are
-      # passed to the scraper via env vars so uc.Chrome() uses them directly
-      # instead of auto-downloading a mismatched ChromeDriver.
-      - name: Install Chrome + ChromeDriver (matched)
-        id: setup-chrome
-        uses: browser-actions/setup-chrome@v1
-        with:
-          chrome-version: stable
-          install-chromedriver: true   # ← installs matching ChromeDriver alongside Chrome
-
-      - name: Confirm versions match
+      # ── Install Chrome stable ────────────────────────────────────────────────
+      - name: Install Chrome stable
         run: |
-          echo "Chrome:      $(${{ steps.setup-chrome.outputs.chrome-path }} --version)"
-          echo "ChromeDriver: $(${{ steps.setup-chrome.outputs.chromedriver-path }} --version)"
+          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y /tmp/chrome.deb
+          google-chrome --version
 
-      # ── Virtual display (Chrome runs non-headless — CF detects headless) ────
+      # ── Install the EXACT matching ChromeDriver via Chrome for Testing API ───
+      # Queries the CfT known-good-versions JSON for an entry matching the full
+      # Chrome version string (e.g. 145.0.7632.159), then downloads that
+      # ChromeDriver. This guarantees Chrome and ChromeDriver are always in sync.
+      - name: Install matching ChromeDriver
+        run: |
+          CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
+          echo "Chrome version: $CHROME_VERSION"
+
+          CHROMEDRIVER_INFO=$(python3 - <<PYEOF
+          import urllib.request, json, sys
+
+          chrome_ver = "$CHROME_VERSION"
+          major = chrome_ver.split('.')[0]
+
+          url = "https://googlechromelabs.github.io/chrome-for-testing/known-good-versions-with-downloads.json"
+          data = json.loads(urllib.request.urlopen(url).read())
+
+          # Try exact version match first, then same major.minor.patch prefix
+          prefixes = [chrome_ver, '.'.join(chrome_ver.split('.')[:3])]
+          match = None
+          for prefix in prefixes:
+              candidates = [v for v in data['versions'] if v['version'].startswith(prefix)]
+              if candidates:
+                  match = candidates[-1]
+                  break
+
+          if not match:
+              # Fall back to latest entry for the same major version
+              candidates = [v for v in data['versions'] if v['version'].startswith(major + '.')]
+              match = candidates[-1] if candidates else None
+
+          if not match:
+              print("ERROR: no matching ChromeDriver found", file=sys.stderr)
+              sys.exit(1)
+
+          downloads = match['downloads'].get('chromedriver', [])
+          dl = next((d for d in downloads if d['platform'] == 'linux64'), None)
+          if not dl:
+              print("ERROR: no linux64 chromedriver download", file=sys.stderr)
+              sys.exit(1)
+
+          print(match['version'] + ' ' + dl['url'])
+          PYEOF
+          )
+
+          DRIVER_VER=$(echo $CHROMEDRIVER_INFO | cut -d' ' -f1)
+          DRIVER_URL=$(echo $CHROMEDRIVER_INFO | cut -d' ' -f2)
+          echo "ChromeDriver version: $DRIVER_VER"
+          echo "Downloading: $DRIVER_URL"
+
+          wget -q -O /tmp/chromedriver.zip "$DRIVER_URL"
+          unzip -q /tmp/chromedriver.zip -d /tmp/chromedriver_extract
+          sudo mv /tmp/chromedriver_extract/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver
+          sudo chmod +x /usr/local/bin/chromedriver
+          chromedriver --version
+
+          echo "CHROMEDRIVER_PATH=/usr/local/bin/chromedriver" >> $GITHUB_ENV
+          echo "CHROME_PATH=/usr/bin/google-chrome" >> $GITHUB_ENV
+
+      # ── Virtual display (non-headless — CF detects headless) ────────────────
       - name: Start Xvfb virtual display
         run: |
-          sudo apt-get install -y xvfb
+          sudo apt-get install -y -qq xvfb
           Xvfb :99 -screen 0 1920x1080x24 &
           echo "DISPLAY=:99" >> $GITHUB_ENV
           sleep 2
 
-      # ── Pull existing cache from R2 so the scraper runs incrementally ───────
+      # ── Pull existing cache from R2 ──────────────────────────────────────────
       - name: Download games.json and games_cache.json from R2
-        env:
-          AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
-          pip install boto3 --quiet
-          python - <<'EOF'
+          python3 - <<'PYEOF'
           import boto3, os
+          from botocore.config import Config
+          from botocore.exceptions import ClientError
+          from pathlib import Path
+
           s3 = boto3.client(
               "s3",
-              endpoint_url=os.environ["R2_ENDPOINT"],
+              endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
               aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
               aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+              config=Config(signature_version="s3v4"),
+              region_name="auto",
           )
           bucket = os.environ["R2_BUCKET"]
-          for key in ("games.json", "games_cache.json"):
+          for key in ["games.json", "games_cache.json"]:
               try:
                   s3.download_file(bucket, key, key)
-                  print(f"  Downloaded {key}")
-              except Exception as e:
-                  print(f"  {key} not found in R2 (first run?) — {e}")
-          EOF
+                  print(f"  restored {key}  ({Path(key).stat().st_size:,} bytes)")
+              except ClientError as e:
+                  if e.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                      print(f"  {key} not in R2 yet — starting fresh")
+                  else:
+                      print(f"  WARNING: could not download {key}: {e}")
+          PYEOF
 
       # ── Run the scraper ──────────────────────────────────────────────────────
       - name: Run scraper
         env:
-          DISPLAY:          :99
-          # Pass the exact paths from setup-chrome so uc.Chrome() uses them
-          CHROMEDRIVER_PATH: ${{ steps.setup-chrome.outputs.chromedriver-path }}
-          CHROME_PATH:       ${{ steps.setup-chrome.outputs.chrome-path }}
-          CI:               "true"
+          CI: "true"
         run: python scraper_ps4.py
 
       # ── Upload everything to R2 ──────────────────────────────────────────────
       - name: Upload results to R2
-        if: always()   # upload even if scraper errored mid-run (partial cache is better than nothing)
-        env:
-          AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        if: always()
+        run: python upload_to_r2.py
+
+      # ── Summary ─────────────────────────────────────────────────────────────
+      - name: Summary
+        if: always()
         run: |
-          python upload_to_r2.py
+          echo "── games_cache.json ──────────────"
+          python3 -c "
+          import json, pathlib
+          p = pathlib.Path('games_cache.json')
+          if p.exists():
+              data = json.loads(p.read_text())
+              done = sum(1 for e in data if not e.get('error') and e.get('releases'))
+              print(f'{len(data)} entries total, {done} with releases')
+          else:
+              print('not found')
+          " 2>/dev/null || true
+          echo "── screenshots/ ──────────────────"
+          find screenshots/ -type f 2>/dev/null | wc -l | xargs echo "files:"
