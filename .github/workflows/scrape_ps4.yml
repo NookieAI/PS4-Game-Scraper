@@ -29,14 +29,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      # ── Install Chrome stable ────────────────────────────────────────────────
       - name: Install Chrome stable
         run: |
           wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
           sudo apt-get install -y /tmp/chrome.deb
           google-chrome --version
 
-      # ── Install the EXACT matching ChromeDriver via Chrome for Testing API ───
       - name: Install matching ChromeDriver
         run: |
           CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
@@ -91,9 +89,8 @@ jobs:
           echo "CHROMEDRIVER_PATH=/usr/local/bin/chromedriver" >> $GITHUB_ENV
           echo "CHROME_PATH=/usr/bin/google-chrome" >> $GITHUB_ENV
 
-      # ── PureVPN via WireGuard ────────────────────────────────────────────────
       - name: Connect to PureVPN (WireGuard)
-        if: secrets.PUREVPN_WG_CONFIG != ''
+        if: ${{ secrets.PUREVPN_WG_CONFIG != '' }}
         run: |
           sudo apt-get install -y -qq wireguard-tools resolvconf
           echo "${{ secrets.PUREVPN_WG_CONFIG }}" | sudo tee /etc/wireguard/purevpn.conf > /dev/null
@@ -102,7 +99,6 @@ jobs:
           echo "VPN connected — public IP:"
           curl -s https://api.ipify.org && echo
 
-      # ── Virtual display (non-headless — CF detects headless) ────────────────
       - name: Start Xvfb virtual display
         run: |
           sudo apt-get install -y -qq xvfb
@@ -110,7 +106,6 @@ jobs:
           echo "DISPLAY=:99" >> $GITHUB_ENV
           sleep 2
 
-      # ── Pull existing cache from R2 ──────────────────────────────────────────
       - name: Download games.json and games_cache.json from R2
         run: |
           python3 - <<'PYEOF'
@@ -139,23 +134,19 @@ jobs:
                       print(f"  WARNING: could not download {key}: {e}")
           PYEOF
 
-      # ── Run the scraper ──────────────────────────────────────────────────────
       - name: Run scraper
         env:
           CI: "true"
         run: python scraper_ps4.py
 
-      # ── Upload everything to R2 ──────────────────────────────────────────────
       - name: Upload results to R2
         if: always()
         run: python upload_to_r2.py
 
-      # ── Disconnect VPN ──────────────────────────────────────────────────────
       - name: Disconnect PureVPN
-        if: always() && secrets.PUREVPN_WG_CONFIG != ''
+        if: ${{ always() && secrets.PUREVPN_WG_CONFIG != '' }}
         run: sudo wg-quick down purevpn 2>/dev/null || true
 
-      # ── Summary ─────────────────────────────────────────────────────────────
       - name: Summary
         if: always()
         run: |
