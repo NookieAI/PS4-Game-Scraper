@@ -2397,27 +2397,119 @@ def _is_game_href(href: str) -> bool:
                                          "/author/", "/feed/", "wp-", "?", "#"]))
 
 
-# ── Strategy 1: Yoast sitemap ────────────────────────────────────────────────
-# Yoast SEO (used by dlpsgame.com) publishes /post-sitemap.xml (and numbered
-# variants: /post-sitemap2.xml …) containing every post URL + <lastmod>.
-# Cloudflare explicitly whitelists sitemap fetches for search-engine crawlers,
-# so this succeeds even from datacenter IPs where category HTML and RSS both
-# get 403/challenge responses.
-#
-# Each sitemap file is sorted newest-first by <lastmod>.  We read page 1,
-# collect URLs newer than the most-recently-known game, and stop.  If the
-# entire first sitemap file is newer than anything we know (full-rebuild mode)
-# we continue to sitemap page 2, 3 … until we hit a known URL.
+# ── Strategy 1: WordPress REST API ───────────────────────────────────────────
+# /wp-json/wp/v2/posts is a JSON endpoint used by mobile apps and headless WP.
+# CF typically does NOT block it (doing so would break legitimate API consumers).
+# We resolve the PS4 category ID once, then page through posts newest-first.
+
+def _get_wp_category_id(base_url: str, slug: str = "ps4") -> int | None:
+    """Resolve a WP category slug to its numeric ID via the REST API."""
+    url = f"{base_url}/wp-json/wp/v2/categories?slug={slug}&per_page=1"
+    try:
+        hdrs = {**FETCH_HEADERS, "Accept": "application/json"}
+        r = _req_session.get(url, headers=hdrs, timeout=FETCH_TIMEOUT,
+                             allow_redirects=True)
+        if r.status_code != 200:
+            return None
+        data = r.json()
+        if data and isinstance(data, list):
+            return data[0].get("id")
+    except Exception as e:
+        print(f"    [wp-api] category lookup error: {e}")
+    return None
+
+
+def _discover_via_wp_api(known_urls: set) -> tuple:
+    """
+    Page through /wp-json/wp/v2/posts?categories=<ps4_id>&orderby=date&order=desc
+    collecting new game URLs until a known URL is hit.
+
+    Returns (results, exhausted) where:
+      results   – list of {"title": str, "url": str} dicts, newest first.
+      exhausted – True if a known URL was encountered (stop paginating).
+
+    CF almost never blocks WP REST API endpoints because they are required for
+    Gutenberg editor, mobile apps, and headless WP — blocking them breaks the
+    site's own admin panel.
+    """
+    BASE   = "https://dlpsgame.com"
+    PER_PAGE = 100   # WP REST API max is 100
+
+    cat_id = _get_wp_category_id(BASE, "ps4")
+    if cat_id is None:
+        print(f"    [wp-api] could not resolve PS4 category ID — skipping")
+        return [], False
+    print(f"    [wp-api] PS4 category ID = {cat_id}")
+
+    results   = []
+    exhausted = False
+    page      = 1
+
+    while True:
+        url = (f"{BASE}/wp-json/wp/v2/posts"
+               f"?categories={cat_id}"
+               f"&per_page={PER_PAGE}"
+               f"&page={page}"
+               f"&orderby=date&order=desc"
+               f"&_fields=link,slug,title,date")
+        try:
+            hdrs = {**FETCH_HEADERS, "Accept": "application/json"}
+            r = _req_session.get(url, headers=hdrs, timeout=FETCH_TIMEOUT,
+                                 allow_redirects=True)
+            if r.status_code == 400:
+                # WP returns 400 when page exceeds total pages
+                break
+            if r.status_code != 200:
+                print(f"    [wp-api] page {page} → HTTP {r.status_code}")
+                break
+            if _is_cf_challenge(r.text):
+                print(f"    [wp-api] page {page} → CF challenge")
+                break
+
+            posts = r.json()
+            if not posts or not isinstance(posts, list):
+                break
+
+            page_new = 0
+            for post in posts:
+                href  = _norm_href(post.get("link", ""))
+                title = post.get("title", {})
+                if isinstance(title, dict):
+                    title = title.get("rendered", "")
+                # Decode HTML entities in title (WP REST API returns rendered HTML)
+                import html as _html_mod
+                title = _html_mod.unescape(title).strip()
+
+                if not href or not _is_game_href(href):
+                    continue
+                if href in known_urls:
+                    exhausted = True
+                    break
+                results.append({"title": title, "url": href})
+                known_urls.add(href)
+                page_new += 1
+
+            print(f"    [wp-api] page {page}: {page_new} new, "
+                  f"{len(posts)} posts scanned")
+
+            if exhausted or len(posts) < PER_PAGE:
+                break   # hit known URL, or last page of results
+            page += 1
+
+        except Exception as e:
+            print(f"    [wp-api] page {page} error: {e}")
+            break
+
+    return results, exhausted
+
+
+# ── Strategy 2: Yoast sitemap ─────────────────────────────────────────────────
 
 def _fetch_sitemap_index(base_url: str = "https://dlpsgame.com") -> list:
-    """
-    Fetch the Yoast sitemap index and return the list of post-sitemap URLs
-    in the order Yoast emits them (newest sitemap first for recent posts).
-    Falls back to the canonical /post-sitemap.xml if the index is unreachable.
-    """
+    """Return list of post-sitemap URLs from the Yoast/WP sitemap index."""
     index_urls = [
         f"{base_url}/sitemap_index.xml",
-        f"{base_url}/wp-sitemap.xml",       # WP core sitemap (WP 5.5+)
+        f"{base_url}/wp-sitemap.xml",
     ]
     hdrs = {**FETCH_HEADERS, "Accept": "application/xml, text/xml, */*"}
 
@@ -2425,11 +2517,8 @@ def _fetch_sitemap_index(base_url: str = "https://dlpsgame.com") -> list:
         try:
             r = _req_session.get(index_url, headers=hdrs,
                                  timeout=FETCH_TIMEOUT, allow_redirects=True)
-            if r.status_code != 200:
+            if r.status_code != 200 or _is_cf_challenge(r.text):
                 continue
-            if _is_cf_challenge(r.text):
-                continue
-
             import warnings
             try:
                 from bs4 import XMLParsedAsHTMLWarning
@@ -2437,45 +2526,34 @@ def _fetch_sitemap_index(base_url: str = "https://dlpsgame.com") -> list:
             except ImportError:
                 pass
             soup = BeautifulSoup(r.content, "html.parser")
-
-            # Yoast index: <sitemap><loc>…/post-sitemap.xml</loc></sitemap>
-            locs = [tag.get_text(strip=True) for tag in soup.find_all("loc")
-                    if "post-sitemap" in tag.get_text(strip=True).lower()]
+            locs = [t.get_text(strip=True) for t in soup.find_all("loc")
+                    if "post-sitemap" in t.get_text(strip=True).lower()]
             if locs:
                 return locs
-
-            # WP core index: <sitemap><loc>…/wp-sitemap-posts-post-1.xml</loc>
-            locs = [tag.get_text(strip=True) for tag in soup.find_all("loc")
-                    if "sitemap-posts-post" in tag.get_text(strip=True).lower()]
+            locs = [t.get_text(strip=True) for t in soup.find_all("loc")
+                    if "sitemap-posts-post" in t.get_text(strip=True).lower()]
             if locs:
                 return locs
-
         except Exception as e:
-            print(f"    [sitemap-index] {index_url}: {e}")
-            continue
+            print(f"    [sitemap-index] {e}")
 
-    # Hard fallback: numbered Yoast sitemaps
     return [f"{base_url}/post-sitemap.xml"]
 
 
 def _discover_via_sitemap(known_urls: set) -> tuple:
-    """
-    Parse Yoast post sitemaps to find new game URLs.
-
-    Returns (results, exhausted) where:
-      results   – list of {"title": str, "url": str, "lastmod": str} dicts,
-                  newest first, containing only URLs not in known_urls.
-      exhausted – True if we hit a known URL (can stop paginating).
-
-    Title is not present in sitemaps; we set it to "" and let scrape_page
-    fill it in (same as the old category-page path already did — title_hint
-    was only used as a fallback label anyway).
-    """
+    """Parse Yoast post sitemaps. Returns (results, exhausted)."""
     results   = []
     exhausted = False
 
     sitemap_urls = _fetch_sitemap_index("https://dlpsgame.com")
-    print(f"    [sitemap] found {len(sitemap_urls)} post-sitemap file(s)")
+    print(f"    [sitemap] {len(sitemap_urls)} post-sitemap file(s)")
+
+    import warnings
+    try:
+        from bs4 import XMLParsedAsHTMLWarning
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+    except ImportError:
+        pass
 
     for sm_url in sitemap_urls:
         if exhausted:
@@ -2485,57 +2563,42 @@ def _discover_via_sitemap(known_urls: set) -> tuple:
             r = _req_session.get(sm_url, headers=hdrs,
                                  timeout=FETCH_TIMEOUT, allow_redirects=True)
             if r.status_code != 200:
-                print(f"    [sitemap] {sm_url} → HTTP {r.status_code} — skipping")
+                print(f"    [sitemap] {sm_url} → HTTP {r.status_code}")
                 continue
             if _is_cf_challenge(r.text):
-                print(f"    [sitemap] {sm_url} → CF challenge — skipping")
+                print(f"    [sitemap] {sm_url} → CF challenge")
                 continue
 
-            import warnings
-            try:
-                from bs4 import XMLParsedAsHTMLWarning
-                warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-            except ImportError:
-                pass
-            soup = BeautifulSoup(r.content, "html.parser")
-
-            # Each <url> block: <loc>…</loc> <lastmod>…</lastmod>
+            soup  = BeautifulSoup(r.content, "html.parser")
             entries = []
             for url_tag in soup.find_all("url"):
                 loc = url_tag.find("loc")
                 lm  = url_tag.find("lastmod")
                 if not loc:
                     continue
-                href    = loc.get_text(strip=True)
+                href = _norm_href(loc.get_text(strip=True))
                 lastmod = lm.get_text(strip=True) if lm else ""
                 if _is_game_href(href):
-                    entries.append((_norm_href(href), lastmod))
+                    entries.append((href, lastmod))
 
-            # Sitemaps are already newest-first in Yoast; sort by lastmod
-            # descending as a belt-and-braces measure.
             entries.sort(key=lambda x: x[1], reverse=True)
             print(f"    [sitemap] {sm_url} → {len(entries)} game URLs")
 
-            for href, lastmod in entries:
+            for href, _ in entries:
                 if href in known_urls:
                     exhausted = True
                     break
-                results.append({"title": "", "url": href, "lastmod": lastmod})
-
+                results.append({"title": "", "url": href})
         except Exception as e:
-            print(f"    [sitemap] {sm_url} error: {e}")
+            print(f"    [sitemap] error: {e}")
 
     return results, exhausted
 
 
-# ── Strategy 2: RSS feed ──────────────────────────────────────────────────────
+# ── Strategy 3: RSS feed ──────────────────────────────────────────────────────
 
 def _discover_via_rss(feed_url: str, known_urls: set) -> tuple:
-    """
-    Fetch one page of a WordPress RSS feed.
-    Returns (results, hit_known).
-    Kept as secondary fallback — RSS is 403 on GH Actions but works locally.
-    """
+    """Fetch one page of a WP RSS feed. Returns (results, hit_known)."""
     try:
         hdrs = {**FETCH_HEADERS,
                 "Accept": "application/rss+xml, application/xml, text/xml, */*"}
@@ -2552,56 +2615,48 @@ def _discover_via_rss(feed_url: str, known_urls: set) -> tuple:
         except ImportError:
             pass
         soup = BeautifulSoup(r.content, "html.parser")
-        results   = []
-        hit_known = False
+        results, hit_known = [], False
 
         for item in soup.find_all("item"):
             href = ""
             guid = item.find("guid")
-            if guid:
-                if guid.get("ispermalink", "true").lower() != "false":
-                    href = guid.get_text(strip=True)
+            if guid and guid.get("ispermalink", "true").lower() != "false":
+                href = guid.get_text(strip=True)
             if not href:
-                link_tag = item.find("link")
-                if link_tag:
-                    href = (link_tag.get_text(strip=True) or
-                            str(link_tag.next_sibling or "").strip())
+                lt = item.find("link")
+                if lt:
+                    href = lt.get_text(strip=True) or str(lt.next_sibling or "").strip()
             if not href or not _is_game_href(href):
                 continue
-
             href = _norm_href(href)
-            title_tag = item.find("title")
-            title = (title_tag.get_text(strip=True) if title_tag else "").strip()
+            tt = item.find("title")
+            title = tt.get_text(strip=True) if tt else ""
             if title.startswith("<![CDATA["):
                 title = title[9:].rstrip("]]>").strip()
             if not title:
                 continue
-
             if href in known_urls:
                 hit_known = True
                 break
             results.append({"title": title, "url": href})
 
         return results, hit_known
-
     except Exception as e:
         print(f"    [rss] fetch error: {e}")
         return [], False
 
 
-# ── Strategy 3: category HTML via requests ───────────────────────────────────
+# ── Strategy 4: category HTML (requests → browser) ───────────────────────────
 
 def _discover_page_via_requests(page_url: str) -> list:
-    """Fetch a category HTML page and extract game links via BS4.
-    Returns list of (href, title) tuples, or empty list on failure."""
+    """Fetch a category HTML page via requests+BS4. Returns (href, title) list."""
     selectors_str = ", ".join([
         ".blog-posts .post-title a", "h2.post-title.entry-title a",
         "h2.post-title a", ".entry-title a", ".post.bar.hentry h2 a",
     ])
     try:
-        hdrs = {**FETCH_HEADERS,
-                "Referer": "https://dlpsgame.com/",
-                "Accept":  "text/html,application/xhtml+xml,*/*;q=0.8"}
+        hdrs = {**FETCH_HEADERS, "Referer": "https://dlpsgame.com/",
+                "Accept": "text/html,application/xhtml+xml,*/*;q=0.8"}
         r = _req_session.get(page_url, headers=hdrs, timeout=FETCH_TIMEOUT,
                              allow_redirects=True)
         r.raise_for_status()
@@ -2619,17 +2674,18 @@ def _discover_page_via_requests(page_url: str) -> list:
 
 def discover_new_games(driver, known_urls: set) -> list:
     """
-    Collect new game URLs/titles, newest first, stopping at the first known URL.
+    Collect new game URLs/titles, newest first, stopping at first known URL.
 
-    Strategy priority:
-      1. Yoast sitemap  (/post-sitemap.xml)   — CF-whitelisted for crawlers;
-                                                works from datacenter IPs.
-      2. RSS feed        (/category/ps4/feed/) — works on residential IPs.
-      3. requests+BS4    (category HTML page)  — works on residential IPs.
-      4. UC browser      (category HTML page)  — last resort.
+    Strategy order (fastest/most CF-resilient first):
+      1. WP REST API  /wp-json/wp/v2/posts  — JSON endpoint; CF almost never
+                                              blocks it (breaks Gutenberg/apps).
+      2. Yoast sitemap /post-sitemap.xml    — search-engine whitelisted.
+      3. RSS feed      /category/ps4/feed/  — works on residential IPs.
+      4. requests+BS4  category HTML        — works on residential IPs.
+      5. UC browser    category HTML        — last resort.
 
-    Strategies 1–3 need no browser.  Strategy 4 is only attempted when all
-    lightweight strategies return zero results for a given page.
+    Each strategy is tried in order; the first one that returns any results
+    (or confidently signals "nothing new") is used and the rest are skipped.
     """
     new_games = []
     print("\n── New-game discovery (PS4) ──────────────────────────────────────────")
@@ -2650,7 +2706,6 @@ def discover_new_games(driver, known_urls: set) -> list:
         });
         return out;
     """
-
     selectors_string = ", ".join([
         ".blog-posts .post-title a", "h2.post-title.entry-title a",
         "h2.post-title a", "h1.post-title a", ".entry-title a",
@@ -2661,21 +2716,31 @@ def discover_new_games(driver, known_urls: set) -> list:
         print(f"  Scanning: {cat_url}")
         feed_base = cat_url.rstrip("/") + "/feed/"
 
-        # ── Strategy 1: Yoast sitemap (works from CI datacenter IPs) ─────────
-        print(f"  [strategy 1/4] sitemap")
+        # ── Strategy 1: WP REST API ───────────────────────────────────────────
+        print(f"  [1/5] wp-json REST API")
+        api_results, api_exhausted = _discover_via_wp_api(known_urls)
+        if api_results or api_exhausted:
+            for item in api_results:
+                new_games.append(item)
+                print(f"    + {item['title'] or item['url'].split('/')[-2]}")
+            print(f"  [wp-api] {len(api_results)} new game(s)"
+                  + (" (hit known — done)" if api_exhausted else ""))
+            break
+
+        # ── Strategy 2: Yoast sitemap ─────────────────────────────────────────
+        print(f"  [2/5] sitemap")
         sm_results, sm_exhausted = _discover_via_sitemap(known_urls)
         if sm_results or sm_exhausted:
             for item in sm_results:
                 known_urls.add(item["url"])
                 new_games.append({"title": item["title"], "url": item["url"]})
-                print(f"    + {item['url'].split('/')[-2]}")   # slug as label
-            if sm_exhausted or sm_results:
-                print(f"  [sitemap] found {len(sm_results)} new game(s)"
-                      + (" (hit known — stopped)" if sm_exhausted else ""))
-                break   # sitemap succeeded; skip RSS/browser strategies
+                print(f"    + {item['url'].split('/')[-2]}")
+            print(f"  [sitemap] {len(sm_results)} new game(s)"
+                  + (" (hit known — done)" if sm_exhausted else ""))
+            break
 
-        # ── Strategy 2: RSS feed ──────────────────────────────────────────────
-        print(f"  [strategy 2/4] rss")
+        # ── Strategy 3: RSS feed ──────────────────────────────────────────────
+        print(f"  [3/5] rss")
         rss_working = False
         for page_num in range(1, MAX_DISCOVERY_PAGES + 1):
             feed_url = feed_base if page_num == 1 else f"{feed_base}?paged={page_num}"
@@ -2686,76 +2751,62 @@ def discover_new_games(driver, known_urls: set) -> list:
                     new_games.append(item)
                     known_urls.add(item["url"])
                     print(f"    + {item['title']}")
-                print(f"    Page {page_num} [rss]: {len(rss_results)} new game(s)")
-                if rss_hit:
-                    break
-                if not rss_results:
+                print(f"    Page {page_num} [rss]: {len(rss_results)} new")
+                if rss_hit or not rss_results:
                     break
             else:
-                if rss_working:
-                    break   # was working, now empty → end of feed
-                break       # never worked → try next strategy
-
+                break
         if rss_working:
-            break   # RSS succeeded; skip browser strategies
+            break
 
-        # ── Strategies 3 & 4: HTML category page (requests → browser) ────────
-        print(f"  [strategy 3/4] requests+browser category pages")
+        # ── Strategies 4 & 5: HTML category page (requests → browser) ────────
+        print(f"  [4/5] requests  [5/5] browser")
         for page_num in range(1, MAX_DISCOVERY_PAGES + 1):
-            page_url = cat_url if page_num == 1 else f"{cat_url}page/{page_num}/"
-            try:
-                raw_links    = _discover_page_via_requests(page_url)
-                used_browser = False
+            page_url     = cat_url if page_num == 1 else f"{cat_url}page/{page_num}/"
+            raw_links    = _discover_page_via_requests(page_url)
+            used_browser = False
 
+            if not raw_links:
+                print(f"    Page {page_num}: requests blocked — trying browser")
+                driver.get(page_url)
+                wait_for_cf(driver)
+                jitter(2, 0.4)
+                raw_links = driver.execute_script(_JS_EXTRACT) or []
                 if not raw_links:
-                    print(f"    Page {page_num}: requests got 0 — retrying via browser")
-                    driver.get(page_url)
-                    wait_for_cf(driver)   # no require_selector — just wait for CF clear
-                    jitter(2, 0.4)
+                    time.sleep(3)
                     raw_links = driver.execute_script(_JS_EXTRACT) or []
-                    if not raw_links:
-                        time.sleep(3)
-                        raw_links = driver.execute_script(_JS_EXTRACT) or []
-                    if not raw_links:
-                        soup = BeautifulSoup(driver.page_source, "html.parser")
-                        raw_links = [
-                            (a["href"], a.get_text(strip=True))
-                            for a in soup.select(selectors_string)
-                            if a.get("href")
-                        ]
-                    used_browser = True
-
                 if not raw_links:
+                    soup = BeautifulSoup(driver.page_source, "html.parser")
+                    raw_links = [(a["href"], a.get_text(strip=True))
+                                 for a in soup.select(selectors_string)
+                                 if a.get("href")]
+                used_browser = True
+
+            if not raw_links:
+                try:
                     print(f"    Page {page_num}: all strategies failed — stopping")
-                    try:
-                        print(f"    [DEBUG] browser title: {driver.title!r}")
-                    except Exception:
-                        pass
+                    print(f"    [DEBUG] browser title: {driver.title!r}")
+                except Exception:
+                    pass
+                break
+
+            hit_known = False
+            page_new  = 0
+            for href, title in raw_links:
+                href = _norm_href(href)
+                if not _is_game_href(href):
+                    continue
+                if href in known_urls:
+                    print(f"    Page {page_num}: hit known '{title}' — stopping")
+                    hit_known = True
                     break
-
-                source_label = "browser" if used_browser else "requests"
-                hit_known = False
-                page_new  = 0
-
-                for href, title in raw_links:
-                    href = _norm_href(href)
-                    if not _is_game_href(href):
-                        continue
-                    if href in known_urls:
-                        print(f"    Page {page_num}: hit known '{title}' — stopping")
-                        hit_known = True
-                        break
-                    new_games.append({"title": title, "url": href})
-                    known_urls.add(href)
-                    page_new += 1
-                    print(f"    + {title}")
-
-                print(f"    Page {page_num} [{source_label}]: {page_new} new game(s)")
-                if hit_known:
-                    break
-
-            except Exception as e:
-                print(f"    [ERROR] page {page_num}: {e}")
+                new_games.append({"title": title, "url": href})
+                known_urls.add(href)
+                page_new += 1
+                print(f"    + {title}")
+            src = "browser" if used_browser else "requests"
+            print(f"    Page {page_num} [{src}]: {page_new} new")
+            if hit_known:
                 break
 
     print(f"  Total new: {len(new_games)}")
