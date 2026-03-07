@@ -1,0 +1,116 @@
+name: PS4 Scraper — Daily
+
+on:
+  schedule:
+    - cron: '0 3 * * *'   # 3:00 AM UTC daily
+  workflow_dispatch:        # manual trigger via Actions tab
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330    # 5h 30m (GitHub hard limit is 6h)
+
+    # No permissions to write back to the repo.
+    # All data goes to R2 only. The runner disk is ephemeral and wiped after
+    # the job — nothing is ever committed or stored in GitHub.
+    permissions:
+      contents: read
+
+    env:
+      R2_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_ACCOUNT_ID:        ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET:            ${{ secrets.R2_BUCKET }}
+
+    steps:
+
+      # 1. Checkout (code only — no data files)
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      # 2. Python
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      # 3. Chrome + virtual display
+      - name: Install Chromium & Xvfb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq chromium-browser xvfb
+
+      # 4. Pull existing cache from R2
+      # Downloads games.json + games_cache.json from R2 to the runner's
+      # local disk so the scraper runs incrementally (skips completed entries).
+      # screenshots/ is NOT pulled — we only upload new ones each run.
+      # If no files exist yet (first run) the scraper starts from scratch.
+      - name: Restore cache from R2
+        run: |
+          python - <<'PYEOF'
+          import os, boto3
+          from pathlib import Path
+          from botocore.config import Config
+          from botocore.exceptions import ClientError
+
+          s3 = boto3.client(
+              "s3",
+              endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+              aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
+              aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
+              config=Config(signature_version="s3v4"),
+              region_name="auto",
+          )
+          bucket = os.environ["R2_BUCKET"]
+          for key in ["games.json", "games_cache.json"]:
+              try:
+                  s3.download_file(bucket, key, key)
+                  print(f"  restored {key}  ({Path(key).stat().st_size:,} bytes)")
+              except ClientError as e:
+                  if e.response["Error"]["Code"] in ("404", "NoSuchKey"):
+                      print(f"  {key} not in R2 yet — starting fresh")
+                  else:
+                      print(f"  WARNING: could not download {key}: {e}")
+          PYEOF
+
+      # 5. Run the scraper
+      # undetected_chromedriver needs a real display — Xvfb provides one.
+      # All output (games.json, games_cache.json, screenshots/) is written
+      # to the runner's local disk only. Nothing touches the Git repo.
+      - name: Run scraper
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 -ac +extension GLX +render -noreset &
+          sleep 2
+          DISPLAY=:99 python scraper_ps4.py
+        timeout-minutes: 300
+
+      # 6. Upload everything to R2
+      # Runs even if the scraper crashed mid-run so partial progress is saved.
+      - name: Upload to R2
+        if: always()
+        run: python upload_to_r2.py
+
+      # 7. Quick summary
+      - name: Summary
+        if: always()
+        run: |
+          echo "── games.json ────────────────────"
+          wc -c games.json 2>/dev/null || echo "not found"
+          echo "── games_cache.json ──────────────"
+          python -c "
+          import json, pathlib
+          p = pathlib.Path('games_cache.json')
+          if p.exists():
+              data = json.loads(p.read_text())
+              total = len(data)
+              done  = sum(1 for e in data if not e.get('error') and e.get('releases'))
+              print(f'{total} entries total, {done} with releases')
+          else:
+              print('not found')
+          " 2>/dev/null || true
+          echo "── screenshots/ ──────────────────"
+          find screenshots/ -type f 2>/dev/null | wc -l | xargs echo "files:"
