@@ -2556,7 +2556,7 @@ def discover_new_games(driver, known_urls: set) -> list:
     # (no prior navigations). Individual game pages don't get challenged, so
     # loading one first establishes CF trust for the subsequent category fetch.
     # We only do this once, before the first category loop iteration.
-    _warmup_done = False
+    _warmup_done = [False]  # list so inner scope can mutate without nonlocal
 
     def _warmup_browser(driver, known_urls):
         """Load one known game page to establish CF session trust."""
@@ -2634,10 +2634,9 @@ def discover_new_games(driver, known_urls: set) -> list:
                     # Warm up: load a known game page to establish CF session trust.
                     # This must happen before the category page — CF challenges the
                     # category page when the session is cold but not individual game pages.
-                    nonlocal _warmup_done
-                    if not _warmup_done:
+                    if not _warmup_done[0]:
                         _warmup_browser(driver, known_urls)
-                        _warmup_done = True
+                        _warmup_done[0] = True
 
                     driver.get(page_url)
                     # Wait for CF to clear without requiring a selector —
