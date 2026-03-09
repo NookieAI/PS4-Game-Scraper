@@ -6,18 +6,6 @@ set "SCRAPER=%BASE_DIR%\scraper_ps4_v2.py"
 
 REM ── R2 / rclone config ────────────────────────────────────────────────────
 REM rclone must be installed and on PATH, OR set RCLONE_EXE to full path.
-REM Configure an rclone remote named "r2ps4" pointing at the ps4 bucket, OR
-REM pass credentials via env vars (rclone supports RCLONE_S3_* vars).
-REM
-REM Minimal rclone config for Cloudflare R2:
-REM   [r2ps4]
-REM   type = s3
-REM   provider = Cloudflare
-REM   access_key_id = YOUR_KEY
-REM   secret_access_key = YOUR_SECRET
-REM   endpoint = https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com
-REM   acl = private
-REM
 REM Set these if not already in rclone.conf / environment:
 if not defined RCLONE_EXE set "RCLONE_EXE=rclone"
 if not defined R2_REMOTE   set "R2_REMOTE=r2"
