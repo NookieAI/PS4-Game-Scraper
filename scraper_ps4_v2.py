@@ -2813,6 +2813,17 @@ def main():
                 pass
         print("[done] Chrome closed — scraper finished.")
 
+        # ── Upload screenshots to R2 via rclone ────────────────────────────────
+        print("\n[rclone] Uploading screenshots to R2...")
+        try:
+            _sp.run(
+                ["rclone", "copy", r"C:\temp\testing\ps4\screenshots", "r2:images", "-P"],
+                check=False,
+            )
+            print("[rclone] Upload complete.")
+        except Exception as _rclone_err:
+            print(f"[rclone] Upload failed: {_rclone_err}")
+
     print(f"\nDone! {len(cache)} entries in '{OUTPUT_JSON}'")
 
 
