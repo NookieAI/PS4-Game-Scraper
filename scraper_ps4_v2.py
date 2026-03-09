@@ -105,6 +105,7 @@ CF_TIMEOUT          = 40    # max seconds to wait for CF challenge to clear
 # and stop re-scraping that entry for images that will never load.
 MAX_SCREENSHOT_FAILS = 3
 MAX_COVER_FAILS      = 3
+MAX_GAME_LINK_FAILS  = 5    # attempts before a no-game entry is permanently skipped
 
 # ── THREAD POOLS ─────────────────────────────────────────────────────────────
 # Both are long-lived module-level pools, created once and shared across all games.
@@ -620,7 +621,11 @@ def extract_releases_from_htmls(payload_htmls: list[str],
     )
     # Optional region that follows an ID  e.g. "– EUR" / "- USA" / "– HKG"
     _REGION_AFTER_RE = re.compile(
-        r"[\u2013\u2014\-]\s*(USA|EUR|JPN|JAP|JP|ASIA|UK|HKG|HK|KOR|KR|CHN|AU|AUS|INT)",
+        r"[\u2013\u2014\-\|\/\(]?\s*"
+        r"(USA|EUR|JPN|JAP|JP|ASIA|UK|HKG|HK|KOR|KR|CHN|AU|AUS|INT"
+        r"|ARAB|MEA|RUS|BR|BRA|CAN|MX|MEX|SEA|NOPH|IN|IND"
+        r"|FR|DE|ES|IT|PL|NL|PT|FI|NO|SE|DK|ROW|WW|ALL)"
+        r"(?:\b|\))",
         re.IGNORECASE,
     )
     # PKG / RAR / ZIP filenames embed the REAL authoritative ID:
@@ -1375,9 +1380,21 @@ def extract_metadata(soup):
     def full_size(url):
         return re.sub(r'/s\d{2,4}(-c)?/', '/s1600/', url)
 
+    def is_screenshot_host(url):
+        return any(x in url for x in [
+            "blogger.googleusercontent.com",
+            "bp.blogspot.com",
+            "i.imgur.com",
+            "i.ibb.co",
+            "postimg.cc",
+            "images.igdb.com",
+            "cdn.cloudflare.steamstatic.com",
+            "th.bing.com",
+            "media.rawg.io",
+        ])
+
     def is_blogspot(url):
-        return ("blogger.googleusercontent.com" in url
-                or "bp.blogspot.com" in url)
+        return is_screenshot_host(url)
 
     def is_junk(url):
         return any(x in url for x in [
@@ -1455,10 +1472,29 @@ def extract_metadata(soup):
             if "dlpsgame.com/" in href and "/wp-content/" not in href:
                 continue
 
-        if is_blog and in_sep and len(shots) < 5:
+        if is_blog and in_sep and len(shots) < 8:
             fa = img.find_parent("a", class_="ari-fancybox")
             shot_url = (fa["href"].strip() if fa and fa.get("href") else src)
             shots.append(full_size(shot_url))
+            continue
+
+        # Also catch screenshots in figure, p, aligncenter div, wp-block-image div
+        in_figure = img.find_parent("figure") is not None
+        in_para   = img.find_parent("p") is not None
+        in_align  = img.find_parent("div", class_="aligncenter") is not None
+        in_wpblk  = img.find_parent("div", class_="wp-block-image") is not None
+        in_wider  = in_figure or in_para or in_align or in_wpblk
+
+        # Fancybox anywhere on the page
+        fa_any = img.find_parent("a", class_="ari-fancybox")
+        if fa_any and len(shots) < 8:
+            shot_url = fa_any.get("href", "").strip() or src
+            if not is_junk(shot_url):
+                shots.append(full_size(shot_url))
+                continue
+
+        if (is_screenshot_host(src) and in_wider) and len(shots) < 8:
+            shots.append(full_size(src))
             continue
 
         if cover is None:
@@ -1479,6 +1515,18 @@ def extract_metadata(soup):
     if cover:
         seen_s.add(re.sub(r'/s\d{2,4}(-c)?/', '/s1600/', cover))
     shots = [s for s in shots if not (s in seen_s or seen_s.add(s))]
+
+    # ── Second pass: ari-fancybox links anywhere in content ──────────────────
+    for fa in content.find_all("a", class_="ari-fancybox"):
+        href = (fa.get("href") or "").strip()
+        if not href or is_junk(href):
+            continue
+        href_fs = full_size(href)
+        if href_fs in seen_s:
+            continue
+        if (is_screenshot_host(href) or "dlpsgame.com" in href) and len(shots) < 8:
+            seen_s.add(href_fs)
+            shots.append(href_fs)
 
     # ── Info table ────────────────────────────────────────────────────────────
     info_table = {}
@@ -2038,7 +2086,11 @@ def scrape_page(url: str, title_hint: str, driver,
             re.IGNORECASE,
         )
         _FALLBACK_REGION_RE = re.compile(
-            r"[\u2013\u2014\-]\s*(USA|EUR|JPN|JAP|JP|ASIA|UK|HKG|HK|KOR|CHN|AU|INT)",
+            r"[\u2013\u2014\-\|\/\(]?\s*"
+            r"(USA|EUR|JPN|JAP|JP|ASIA|UK|HKG|HK|KOR|KR|CHN|AU|AUS|INT"
+            r"|ARAB|MEA|RUS|BR|BRA|CAN|MX|MEX|SEA|NOPH|IN|IND"
+            r"|FR|DE|ES|IT|PL|NL|PT|FI|NO|SE|DK|ROW|WW|ALL)"
+            r"(?:\b|\))",
             re.IGNORECASE,
         )
         _PS4PS5_PFX = frozenset({"CUSA", "PPSA", "LAPY", "LBXP", "STRN"})
@@ -2131,18 +2183,18 @@ def scrape_page(url: str, title_hint: str, driver,
         extra_out["_no_cusa"] = True
 
     shot_results = [s for s in screenshots if s.get("role", "").startswith("screenshot_")]
-    if not shot_results and not extra_out.get("_no_screenshots"):
-        print("  [no-screenshots] full scrape found no screenshots")
-        extra_out["_no_screenshots"] = True
+    if not shot_results:
+        print("  [no-screenshots] full scrape found no screenshots — will retry in patch cycles")
+        # Do NOT set _no_screenshots here. patch_entry counts failures up to MAX_SCREENSHOT_FAILS.
 
     has_game_links = any(r.get("game") for r in releases)
     if not has_game_links and releases and not extra_out.get("_no_game"):
         if extra_out.get("_cross_refs"):
-            # Cross-ref page — links live on other pages, not here. Don't flag.
-            pass
+            pass  # Cross-ref page
         else:
-            print("  [no-game] full scrape found no game links — marking _no_game=True")
-            extra_out["_no_game"] = True
+            # First scrape: don't immediately flag _no_game.
+            # patch_entry will count failures up to MAX_GAME_LINK_FAILS.
+            print("  [no-game] full scrape found no game links — will retry in patch cycles")
 
     n_game   = sum(len(r["game"])    for r in releases)
     n_upd    = sum(len(r["updates"]) for r in releases)
@@ -2390,8 +2442,13 @@ def patch_entry(entry: dict, driver,
         if existing_extra.get("_cross_refs"):
             pass  # Cross-ref page — game links come from referenced entries
         else:
-            print("  [no-game] patch found no game links — marking _no_game=True")
-            existing_extra["_no_game"] = True
+            existing_extra.setdefault("_game_fail_count", 0)
+            existing_extra["_game_fail_count"] = int(existing_extra["_game_fail_count"]) + 1
+            fc = existing_extra["_game_fail_count"]
+            print(f"  [no-game] patch found no game links (fail {fc}/{MAX_GAME_LINK_FAILS})")
+            if fc >= MAX_GAME_LINK_FAILS:
+                print("  [no-game] giving up permanently — setting _no_game=True")
+                existing_extra["_no_game"] = True
 
     # ── SCREENSHOT RETRY LIMITER ──────────────────────────────────────────────
     # Count consecutive patch failures. After MAX_SCREENSHOT_FAILS give up
