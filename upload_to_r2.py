@@ -12,8 +12,16 @@ R2 key layout (matches existing bucket structure):
 
 The local screenshots/ prefix is stripped so files land at the bucket
 root level inside their game slug folder, not under screenshots/.
+
+SPEED IMPROVEMENT vs previous version
+──────────────────────────────────────
+Old: head_object() called for EVERY local file (6000+ sequential API round-trips).
+New: list_objects_v2() fetches ALL existing keys in one paginated bulk call,
+     stores them in a set, then skips any file already in the set with zero
+     extra API calls. Only genuinely new files are uploaded.
+     Runtime: ~2-5 s overhead for listing vs ~10-20 min for 6000 head_object calls.
 """
-import os, hashlib, mimetypes, sys
+import os, mimetypes, sys
 from pathlib import Path
 import boto3
 from botocore.config import Config
@@ -39,35 +47,38 @@ s3 = boto3.client(
 
 SCREENSHOTS_DIR = Path("screenshots")
 
-def md5(path: Path) -> str:
-    h = hashlib.md5()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(65536), b""):
-            h.update(chunk)
-    return h.hexdigest()
+# ── Bulk-fetch all existing R2 keys once ─────────────────────────────────────
+# Much faster than calling head_object() for every local file.
+# list_objects_v2 returns up to 1000 keys per page; paginator handles all pages.
+print("Fetching existing R2 keys (one-time bulk list)...")
+_existing_keys: set[str] = set()
+paginator = s3.get_paginator("list_objects_v2")
+for page in paginator.paginate(Bucket=R2_BUCKET):
+    for obj in page.get("Contents", []):
+        _existing_keys.add(obj["Key"])
+print(f"  {len(_existing_keys):,} keys already in R2 bucket")
 
 def upload(local: Path, key: str):
+    # Fast path: key already in R2 — skip entirely, no API call needed.
+    # Images are immutable once uploaded so we never need to re-check content.
+    if key in _existing_keys:
+        print(f"  skip (exists)  {key}")
+        return
     ct = mimetypes.guess_type(str(local))[0] or "application/octet-stream"
-    try:
-        head = s3.head_object(Bucket=R2_BUCKET, Key=key)
-        etag = head["ETag"].strip('"')
-        # ETags for multipart uploads contain a hyphen (e.g. "abc123-2")
-        # and cannot be compared to a plain MD5 hash — always re-upload those.
-        if "-" not in etag and etag == md5(local):
-            print(f"  skip (unchanged)  {key}")
-            return
-    except ClientError:
-        pass  # doesn't exist yet — upload
     print(f"  upload  {key}  ({local.stat().st_size:,} bytes)")
     s3.upload_file(str(local), R2_BUCKET, key, ExtraArgs={"ContentType": ct})
 
 uploaded = 0
+skipped  = 0
 
 # ── JSON outputs ──────────────────────────────────────────────────────────────
 for name in ["games.json", "games_cache.json"]:
     p = Path(name)
     if p.exists():
-        upload(p, name)
+        # JSON files are always re-uploaded (they change every run)
+        ct = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        print(f"  upload  {name}  ({p.stat().st_size:,} bytes)")
+        s3.upload_file(str(p), R2_BUCKET, name, ExtraArgs={"ContentType": ct})
         uploaded += 1
     else:
         print(f"  missing: {name}")
@@ -84,9 +95,13 @@ if SCREENSHOTS_DIR.exists():
         # e.g. screenshots/0-degrees-ps4-pkg/cover.jpg → 0-degrees-ps4-pkg/cover.jpg
         relative_key = f.relative_to(SCREENSHOTS_DIR)
         key = str(relative_key).replace("\\", "/")
+        if key in _existing_keys:
+            skipped += 1
+            # Don't print individual skips for screenshots — too noisy with 6000+ files
+            continue
         upload(f, key)
         uploaded += 1
 else:
     print("  screenshots/ not found — skipping")
 
-print(f"\nDone. {uploaded} file(s) processed.")
+print(f"\nDone. {uploaded} file(s) uploaded, {skipped} already existed in R2 (skipped).")
