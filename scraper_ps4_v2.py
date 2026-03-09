@@ -78,6 +78,7 @@ import base64
 import re
 import os
 import traceback
+import subprocess
 import html as _html
 from concurrent.futures import ThreadPoolExecutor, Future, as_completed, wait as fw_wait, ALL_COMPLETED
 from pathlib import Path
@@ -2763,7 +2764,6 @@ def main():
 
         # Force-kill by PID tree — chromedriver is the parent, Chrome is its child.
         # /T kills the full process tree, /F forces termination.
-        import subprocess
         if chromedriver_pid:
             try:
                 subprocess.run(
