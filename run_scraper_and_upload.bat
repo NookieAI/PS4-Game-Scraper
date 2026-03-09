@@ -1,8 +1,10 @@
 @echo off
 setlocal EnableExtensions
 
-set "BASE_DIR=C:\TEMP\testing\PS4"
-set "SCRAPER=%BASE_DIR%\scraper_ps4_v2.py"
+REM ── Paths: resolve relative to this bat's own directory ───────────────────
+REM %~dp0 always ends with a backslash, so no extra separator is needed below.
+set "BASE_DIR=%~dp0"
+set "SCRAPER=%BASE_DIR%scraper_ps4_v2.py"
 
 REM ── R2 / rclone config ────────────────────────────────────────────────────
 REM rclone must be installed and on PATH, OR set RCLONE_EXE to full path.
@@ -10,13 +12,18 @@ REM Set these if not already in rclone.conf / environment:
 if not defined RCLONE_EXE set "RCLONE_EXE=rclone"
 if not defined R2_REMOTE   set "R2_REMOTE=r2"
 
-cd /d "%BASE_DIR%" || exit /b 1
+cd /d "%BASE_DIR%" || (
+  echo [ERROR] Cannot cd to bat directory: %BASE_DIR%
+  pause
+  exit /b 1
+)
 
 REM ── Run the scraper ───────────────────────────────────────────────────────
 python "%SCRAPER%"
 if errorlevel 1 (
   echo [ERROR] Scraper failed. Skipping upload.
   taskkill /F /IM chromedriver.exe /T >nul 2>&1
+  pause
   exit /b 1
 )
 
