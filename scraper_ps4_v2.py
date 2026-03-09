@@ -1,3 +1,4 @@
+"""
 scraper_ps4_v2.py — dlpsgame.com PS4 scraper (fast edition)
 ============================================================
 
