@@ -45,7 +45,7 @@ REM                Skips files that already exist — no re-upload of existing f
 REM The local "screenshots\" prefix is stripped automatically by rclone copy;
 REM files land at ps4/{game-slug}/cover.jpg etc — matching bucket structure.
 echo Uploading screenshots (new only)...
-%RCLONE_EXE% copy screenshots "%R2_REMOTE%:ps4" --no-traverse --s3-no-check-bucket
+%RCLONE_EXE% copy screenshots "%R2_REMOTE%:images" --no-traverse --s3-no-check-bucket
 if errorlevel 1 echo [WARN] Screenshot upload reported an error.
 
 echo.
