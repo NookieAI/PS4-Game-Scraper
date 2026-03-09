@@ -20,7 +20,7 @@ REM   acl = private
 REM
 REM Set these if not already in rclone.conf / environment:
 if not defined RCLONE_EXE set "RCLONE_EXE=rclone"
-if not defined R2_REMOTE   set "R2_REMOTE=r2ps4"
+if not defined R2_REMOTE   set "R2_REMOTE=r2"
 
 cd /d "%BASE_DIR%" || exit /b 1
 
