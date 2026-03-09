@@ -100,6 +100,12 @@ SLEEP_AFTER_LOAD    = 2     # brief pause after page loads (was 3 s)
 SLEEP_REVEAL        = 2     # after clicking a reveal button (was 5 s)
 CF_TIMEOUT          = 40    # max seconds to wait for CF challenge to clear
 
+# ── SCREENSHOT / COVER RETRY LIMITS ──────────────────────────────────────────
+# After this many failed patch attempts, set _no_screenshots / _no_cover = True
+# and stop re-scraping that entry for images that will never load.
+MAX_SCREENSHOT_FAILS = 3
+MAX_COVER_FAILS      = 3
+
 # ── THREAD POOLS ─────────────────────────────────────────────────────────────
 # Both are long-lived module-level pools, created once and shared across all games.
 # Intermediary fetches: 8 workers — one game has at most ~6–8 inter links
@@ -1714,54 +1720,58 @@ def download_screenshots(urls: list, labels: list, slug: str,
 
 # ── ENTRY COMPLETENESS ────────────────────────────────────────────────────────
 def entry_missing(entry):
-    """Identical to scraper.py — returns set of missing field names."""
+    """
+    Returns set of missing field names.
+
+    Respects _no_screenshots and _no_cover flags — once set (by patch_entry
+    after MAX_*_FAILS attempts) those fields are never flagged as missing again,
+    so the entry gets skipped on future runs instead of re-scraped every time.
+    """
     missing = set()
     if entry.get("error"):
         missing.add("error")
 
     releases   = entry.get("releases") or []
-    extra      = entry.get("extra", {})
+    extra      = entry.get("extra", {}) or {}
     has_game   = any(r.get("game") for r in releases)
     has_legacy = bool(entry.get("filehosts"))
     if not has_game and not has_legacy and not extra.get("_no_game"):
         missing.add("releases")
 
-    shots = entry.get("screenshots", [])
-
-    def file_ok(local):
-        if not local or local == "dead":
-            return False
-        p = Path(local)
-        if not p.exists():
-            p = Path(__file__).parent / local
-        return p.exists() and p.stat().st_size > 500
+    shots = entry.get("screenshots", []) or []
 
     def img_settled(s):
-        return s.get("local") is not None
+        # local=None  → not yet downloaded (missing)
+        # local="dead"→ permanently given up (settled)
+        # local=<path>→ downloaded (settled)
+        return isinstance(s, dict) and s.get("local") is not None
 
-    cover_e = next((s for s in shots if s.get("role") == "cover"), None)
-    if not cover_e or not img_settled(cover_e):
-        missing.add("cover")
+    # ── Cover ─────────────────────────────────────────────────────────────────
+    # Only flag cover as missing if _no_cover is NOT set
+    if not extra.get("_no_cover", False):
+        cover_e = next((s for s in shots
+                        if isinstance(s, dict) and s.get("role") == "cover"), None)
+        if not cover_e or not img_settled(cover_e):
+            missing.add("cover")
 
-    screen_shots  = [s for s in shots if s.get("role", "").startswith("screenshot_")]
-    _no_shots_flg = entry.get("extra", {}).get("_no_screenshots", False)
-    if not screen_shots:
-        if not _no_shots_flg:
+    # ── Screenshots ───────────────────────────────────────────────────────────
+    # Only flag screenshots as missing if _no_screenshots is NOT set
+    if not extra.get("_no_screenshots", False):
+        screen_shots = [s for s in shots
+                        if isinstance(s, dict)
+                        and s.get("role", "").startswith("screenshot_")]
+        if not screen_shots:
             missing.add("screenshots")
-    else:
-        any_unsettled = any(not img_settled(s) for s in screen_shots)
-        if any_unsettled:
-            missing.add("screenshots")
+        else:
+            if any(not img_settled(s) for s in screen_shots):
+                missing.add("screenshots")
 
-    # extra already bound above (line 1508); reassignment kept for clarity
-    extra       = entry.get("extra", {})
-    # Satisfied by: any PS4/PS5 native ID (cusa_id field or per-release cusa),
-    # OR a legacy platform ID (_ps_legacy_id), OR the _no_cusa flag meaning
-    # "we've already confirmed no ID exists on this page".
+    # ── Game ID ───────────────────────────────────────────────────────────────
+    extra = entry.get("extra", {}) or {}
     has_any_id = (
         extra.get("cusa_id") or
         extra.get("_ps_legacy_id") or
-        any(r.get("cusa") for r in entry.get("releases", []))
+        any(r.get("cusa") for r in (entry.get("releases", []) or []))
     )
     if not has_any_id and entry.get("releases") and not extra.get("_no_cusa"):
         missing.add("cusa_id")
@@ -2164,6 +2174,9 @@ def patch_entry(entry: dict, driver,
     print(f"  Patching: {', '.join(sorted(missing))}")
 
     existing_extra = entry.get("extra") or {}
+    existing_extra.setdefault("_shot_fail_count",  0)
+    existing_extra.setdefault("_cover_fail_count", 0)
+    entry["extra"] = existing_extra
     cusa_id        = existing_extra.get("cusa_id", "")
     slug           = game_slug(entry.get("title") or title_hint, url, cusa_id)
 
@@ -2379,6 +2392,46 @@ def patch_entry(entry: dict, driver,
         else:
             print("  [no-game] patch found no game links — marking _no_game=True")
             existing_extra["_no_game"] = True
+
+    # ── SCREENSHOT RETRY LIMITER ──────────────────────────────────────────────
+    # Count consecutive patch failures. After MAX_SCREENSHOT_FAILS give up
+    # permanently by setting _no_screenshots=True and marking locals as "dead".
+    missing_after = entry_missing(entry)
+
+    if "screenshots" in missing_after and not existing_extra.get("_no_screenshots", False):
+        existing_extra["_shot_fail_count"] = int(existing_extra.get("_shot_fail_count", 0)) + 1
+        print(f"  [shots] still missing (fail {existing_extra['_shot_fail_count']}/{MAX_SCREENSHOT_FAILS})")
+        if existing_extra["_shot_fail_count"] >= MAX_SCREENSHOT_FAILS:
+            print("  [shots] giving up permanently — setting _no_screenshots=True")
+            existing_extra["_no_screenshots"] = True
+            fixed = []
+            for s in (entry.get("screenshots") or []):
+                if isinstance(s, dict) and s.get("role", "").startswith("screenshot_") and s.get("local") is None:
+                    fixed.append({**s, "local": "dead"})
+                else:
+                    fixed.append(s)
+            entry["screenshots"] = fixed
+    else:
+        if existing_extra.get("_shot_fail_count"):
+            existing_extra["_shot_fail_count"] = 0
+
+    # ── COVER RETRY LIMITER ───────────────────────────────────────────────────
+    if "cover" in missing_after and not existing_extra.get("_no_cover", False):
+        existing_extra["_cover_fail_count"] = int(existing_extra.get("_cover_fail_count", 0)) + 1
+        print(f"  [cover] still missing (fail {existing_extra['_cover_fail_count']}/{MAX_COVER_FAILS})")
+        if existing_extra["_cover_fail_count"] >= MAX_COVER_FAILS:
+            print("  [cover] giving up permanently — setting _no_cover=True")
+            existing_extra["_no_cover"] = True
+            fixed = []
+            for s in (entry.get("screenshots") or []):
+                if isinstance(s, dict) and s.get("role") == "cover" and s.get("local") is None:
+                    fixed.append({**s, "local": "dead"})
+                else:
+                    fixed.append(s)
+            entry["screenshots"] = fixed
+    else:
+        if existing_extra.get("_cover_fail_count"):
+            existing_extra["_cover_fail_count"] = 0
 
     entry.pop("error", None)
     entry["scraped_at"] = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
