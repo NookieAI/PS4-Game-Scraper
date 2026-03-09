@@ -2797,47 +2797,22 @@ def main():
         inter_pool.shutdown(wait=False)
         img_pool.shutdown(wait=False)
 
-        # ── Guaranteed Chrome shutdown ────────────────────────────────────────
-        # undetected_chromedriver sometimes leaves Chrome alive after quit().
-        # Grab the chromedriver PID before quitting so we can kill its process
-        # tree if Chrome survives.
-        chromedriver_pid = None
-        try:
-            chromedriver_pid = driver.service.process.pid
-        except Exception:
-            pass
-
+        # ── Guaranteed Chrome shutdown ──────────────────────────────────────────
+        # driver.quit() closes the window gracefully; the taskkill calls below
+        # ensure no orphaned chrome/chromedriver processes linger afterward,
+        # which also lets the .bat launcher exit without a keypress.
         try:
             driver.quit()
         except Exception:
             pass
-
-        # Give Chrome 3 s to exit cleanly after driver.quit()
-        time.sleep(3)
-
-        # Force-kill by PID tree — chromedriver is the parent, Chrome is its child.
-        # /T kills the full process tree, /F forces termination.
-        if chromedriver_pid:
+        import subprocess as _sp
+        for _proc in ("chromedriver.exe", "chrome.exe"):
             try:
-                subprocess.run(
-                    ["taskkill", "/F", "/T", "/PID", str(chromedriver_pid)],
-                    capture_output=True,
-                )
+                _sp.run(["taskkill", "/F", "/IM", _proc],
+                        capture_output=True, check=False)
             except Exception:
                 pass
-
-        # Belt-and-braces: kill any leftover chromedriver.exe by name.
-        # Safe to do — chromedriver.exe only exists when Selenium spawned it.
-        # We do NOT kill chrome.exe globally to avoid closing the user's own browser.
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "chromedriver.exe", "/T"],
-                capture_output=True,
-            )
-        except Exception:
-            pass
-
-        print("[browser] Chrome shutdown complete.")
+        print("[done] Chrome closed — scraper finished.")
 
     print(f"\nDone! {len(cache)} entries in '{OUTPUT_JSON}'")
 
