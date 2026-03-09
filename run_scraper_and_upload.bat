@@ -3,15 +3,24 @@ setlocal EnableExtensions
 
 set "BASE_DIR=C:\TEMP\testing\PS4"
 set "SCRAPER=%BASE_DIR%\scraper_ps4_v2.py"
-set "UPLOADER=%BASE_DIR%\upload_to_r2.py"
 
-REM ── R2 credentials ────────────────────────────────────────────────────────
-REM Set these here OR pre-set them as Windows environment variables.
-REM If already set in your system environment, these lines are ignored.
-if not defined R2_ACCOUNT_ID     set "R2_ACCOUNT_ID=your-account-id-here"
-if not defined R2_BUCKET         set "R2_BUCKET=images"
-if not defined R2_ACCESS_KEY_ID  set "R2_ACCESS_KEY_ID=your-access-key-here"
-if not defined R2_SECRET_ACCESS_KEY set "R2_SECRET_ACCESS_KEY=your-secret-key-here"
+REM ── R2 / rclone config ────────────────────────────────────────────────────
+REM rclone must be installed and on PATH, OR set RCLONE_EXE to full path.
+REM Configure an rclone remote named "r2ps4" pointing at the ps4 bucket, OR
+REM pass credentials via env vars (rclone supports RCLONE_S3_* vars).
+REM
+REM Minimal rclone config for Cloudflare R2:
+REM   [r2ps4]
+REM   type = s3
+REM   provider = Cloudflare
+REM   access_key_id = YOUR_KEY
+REM   secret_access_key = YOUR_SECRET
+REM   endpoint = https://YOUR_ACCOUNT_ID.r2.cloudflarestorage.com
+REM   acl = private
+REM
+REM Set these if not already in rclone.conf / environment:
+if not defined RCLONE_EXE set "RCLONE_EXE=rclone"
+if not defined R2_REMOTE   set "R2_REMOTE=r2ps4"
 
 cd /d "%BASE_DIR%" || exit /b 1
 
@@ -23,11 +32,24 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM ── Upload to R2 (fast: bulk key list, skips existing files instantly) ────
-REM upload_to_r2.py handles games.json, games_cache.json AND screenshots/
-REM in a single run — no rclone needed.
-python "%UPLOADER%"
-if errorlevel 1 echo [WARN] Upload reported an error.
+REM ── Upload JSON files (always overwrite — they change every run) ──────────
+echo Uploading JSON outputs...
+%RCLONE_EXE% copyto games.json        "%R2_REMOTE%:ps4/games.json"        --s3-no-check-bucket
+%RCLONE_EXE% copyto games_cache.json  "%R2_REMOTE%:ps4/games_cache.json"  --s3-no-check-bucket
+if errorlevel 1 echo [WARN] JSON upload reported an error.
+
+REM ── Upload screenshots (new only, fast — no full bucket scan) ─────────────
+REM --no-traverse: rclone checks each local file individually against remote.
+REM                Does NOT list the entire bucket first (avoids 6000+ API calls).
+REM                Skips files that already exist — no re-upload of existing files.
+REM The local "screenshots\" prefix is stripped automatically by rclone copy;
+REM files land at ps4/{game-slug}/cover.jpg etc — matching bucket structure.
+echo Uploading screenshots (new only)...
+%RCLONE_EXE% copy screenshots "%R2_REMOTE%:ps4" --no-traverse --s3-no-check-bucket
+if errorlevel 1 echo [WARN] Screenshot upload reported an error.
+
+echo.
+echo Upload complete.
 
 REM ── Optional completion sound ─────────────────────────────────────────────
 powershell -NoProfile -Command ^
