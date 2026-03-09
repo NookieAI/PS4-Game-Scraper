@@ -2742,7 +2742,49 @@ def main():
         save_cache()
         inter_pool.shutdown(wait=False)
         img_pool.shutdown(wait=False)
-        driver.quit()
+
+        # ── Guaranteed Chrome shutdown ────────────────────────────────────────
+        # undetected_chromedriver sometimes leaves Chrome alive after quit().
+        # Grab the chromedriver PID before quitting so we can kill its process
+        # tree if Chrome survives.
+        chromedriver_pid = None
+        try:
+            chromedriver_pid = driver.service.process.pid
+        except Exception:
+            pass
+
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+        # Give Chrome 3 s to exit cleanly after driver.quit()
+        time.sleep(3)
+
+        # Force-kill by PID tree — chromedriver is the parent, Chrome is its child.
+        # /T kills the full process tree, /F forces termination.
+        import subprocess
+        if chromedriver_pid:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(chromedriver_pid)],
+                    capture_output=True,
+                )
+            except Exception:
+                pass
+
+        # Belt-and-braces: kill any leftover chromedriver.exe by name.
+        # Safe to do — chromedriver.exe only exists when Selenium spawned it.
+        # We do NOT kill chrome.exe globally to avoid closing the user's own browser.
+        try:
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "chromedriver.exe", "/T"],
+                capture_output=True,
+            )
+        except Exception:
+            pass
+
+        print("[browser] Chrome shutdown complete.")
 
     print(f"\nDone! {len(cache)} entries in '{OUTPUT_JSON}'")
 
