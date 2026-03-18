@@ -1,50 +1,84 @@
 {
-  "name": "ps4-game-scraper",
-  "version": "2.0.0",
-  "description": "PS4 Game Scraper",
+  "name": "ps4-game-browser",
+  "version": "3.5.0",
+  "description": "PS4 Game Browser — Fuck DLPS",
+  "author": "Nookie",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "build": "electron-builder --win portable",
-    "build:installer": "electron-builder --win nsis"
-  },
-  "author": "Nookie",
-  "license": "MIT",
-  "devDependencies": {
-    "electron": "^28.1.0",
-    "electron-builder": "^24.13.3"
-  },
-  "dependencies": {
-    "axios": "^1.6.2",
-    "cheerio": "^1.0.0-rc.12",
-    "electron-store": "^8.1.0",
-    "fuse.js": "^7.0.0"
+    "start":      "electron .",
+    "dev":        "electron . --dev",
+    "dist":       "electron-builder",
+    "dist:win":   "electron-builder --win",
+    "dist:mac":   "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
   },
   "build": {
-    "appId": "com.nookie.ps4-game-scraper",
-    "productName": "PS4 Game Scraper",
-    "directories": {
-      "output": "dist"
-    },
+    "appId":       "com.nookie.ps4browser",
+    "productName": "PS4 Game Browser",
+    "icon":        "assets/icon1.ico",
+    "directories": { "output": "dist" },
     "files": [
       "main.js",
       "preload.js",
-      "renderer.js",
       "index.html",
-      "assets/**/*",
-      "node_modules/**/*"
+      "package.json",
+      "node_modules/**/*",
+      "!node_modules/**/test{,s}/**",
+      "!node_modules/**/__tests__/**",
+      "!node_modules/**/*.test.js",
+      "!node_modules/**/*.spec.js",
+      "!node_modules/**/*.ts",
+      "!node_modules/**/*.tsx",
+      "!node_modules/**/*.d.ts",
+      "!node_modules/**/*.map",
+      "!node_modules/**/LICENSE{,.md,.txt}",
+      "!node_modules/**/CHANGELOG{,.md,.txt}",
+      "!node_modules/**/README{,.md,.txt}",
+      "!node_modules/**/.npmignore",
+      "!node_modules/**/.github/**",
+      "!dist/**",
+      "!*.md",
+      "!package-lock.json",
+      "!games_cache.json",
+      "!games.json",
+      "!screenshots/**"
     ],
     "win": {
       "target": [
-        {
-          "target": "portable",
-          "arch": ["x64"]
-        }
+        { "target": "portable", "arch": ["x64"] }
       ],
-      "icon": "assets/icon1.ico"
+      "icon": "assets/icon1.ico",
+      "artifactName": "PS4 Game Browser.exe"
     },
-    "portable": {
-      "artifactName": "PS4-Game-Scraper-${version}-Portable.exe"
-    }
-  }
+    "extraResources": [
+      { "from": "assets/",    "to": "assets/",    "filter": ["**/*"] },
+      { "from": "config.json","to": "config.json" }
+    ],
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64","arm64"] },
+        { "target": "zip", "arch": ["x64","arm64"] }
+      ],
+      "icon":     "assets/icon1.icns",
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb",      "arch": ["x64"] }
+      ],
+      "icon":     "assets/icon1.png",
+      "category": "Utility"
+    },
+    "compression": "maximum",
+    "asar": true
+  },
+  "devDependencies": {
+    "electron":         "^25.9.8",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {},
+  "keywords": [],
+  "license": "ISC",
+  "type": "commonjs"
 }
