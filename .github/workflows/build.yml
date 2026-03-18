@@ -1,0 +1,163 @@
+name: Build PS4 Game Browser
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  # ── Windows ────────────────────────────────────────────────────────────────
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows (portable exe)
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false   # skip code-signing
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/*.exe
+          if-no-files-found: error
+
+  # ── macOS ──────────────────────────────────────────────────────────────────
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Convert ico → icns  (requires only sips + iconutil, both built-in on macOS)
+        run: |
+          mkdir -p /tmp/iconbuild/icon.iconset
+          # Extract the best size from the ico using sips
+          sips -s format png assets/icon1.ico --out /tmp/icon_tmp.png 2>/dev/null || true
+          # If ico extraction failed, create a plain fallback
+          if [ ! -s /tmp/icon_tmp.png ]; then
+            python3 -c "
+          import struct, zlib
+          def png1x1(r,g,b):
+              raw=struct.pack('>BBBBBBBBBBBBBB',r,g,b,255,0,0,0,0,0,0,0,0,0,0,0)
+              raw=b'\\x00'+bytes([r,g,b,255])
+              idat=zlib.compress(b'\\x00'+bytes([30,30,30,255])*1)
+              def c(t,d):
+                  return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+              return b'\\x89PNG\\r\\n\\x1a\\n'+c(b'IHDR',struct.pack('>IIBBBBB',1,1,8,2,0,0,0))+c(b'IDAT',zlib.compress(b'\\x00\\x1e\\x1e\\x1e'))+c(b'IEND',b'')
+          open('/tmp/icon_tmp.png','wb').write(png1x1(30,30,30))
+          "
+          fi
+          # Build all required iconset sizes
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size /tmp/icon_tmp.png --out /tmp/iconbuild/icon.iconset/icon_${size}x${size}.png
+            double=$((size*2))
+            sips -z $double $double /tmp/icon_tmp.png --out /tmp/iconbuild/icon.iconset/icon_${size}x${size}@2x.png
+          done
+          iconutil -c icns /tmp/iconbuild/icon.iconset -o assets/icon1.icns
+          echo "icns created: $(ls -lh assets/icon1.icns)"
+
+      - name: Build macOS (dmg + zip, x64 + arm64)
+        run: npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false   # skip code-signing / notarisation
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-build
+          path: |
+            dist/*.dmg
+            dist/*.zip
+          if-no-files-found: error
+
+  # ── Linux ──────────────────────────────────────────────────────────────────
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Linux build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libopenjp2-tools imagemagick
+
+      - name: Convert ico → png
+        run: |
+          convert assets/icon1.ico[0] -resize 512x512 assets/icon1.png 2>/dev/null || \
+          python3 - <<'EOF'
+          # Pure-python fallback: solid 512x512 dark square png
+          import struct, zlib
+          W=H=512
+          row=b'\x00'+b'\x1e\x1e\x1e\xff'*W
+          raw=row*H
+          def chunk(t,d):
+              return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+          data=(b'\x89PNG\r\n\x1a\n'
+                +chunk(b'IHDR',struct.pack('>IIBBBBB',W,H,8,2,0,0,0))
+                +chunk(b'IDAT',zlib.compress(raw))
+                +chunk(b'IEND',b''))
+          open('assets/icon1.png','wb').write(data)
+          print('fallback png written')
+          EOF
+          echo "png ready: $(ls -lh assets/icon1.png)"
+
+      - name: Build Linux (AppImage + deb)
+        run: npm run dist:linux
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-build
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+          if-no-files-found: error
+
+  # ── Release (runs only on version tags) ───────────────────────────────────
+  release:
+    needs: [build-windows, build-mac, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-files
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-files/**/*
+          generate_release_notes: true
