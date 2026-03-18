@@ -42,6 +42,4 @@ Type in the search box to filter games instantly. Click any game card to open th
 
 ---
 
-This is just a scraper, it does not host ANY actual game files. It only searches and displays exteranl links found online.
-And fuck the greedy cunts at DLPS 💸💸💸 and their shitty ads!! 🖕 😁 🖕   
-
+This is just a scraper, it does not host ANY actual game files. It only searches and displays external links found online.
