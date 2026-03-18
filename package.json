@@ -2,7 +2,7 @@
   "name": "ps4-game-browser",
   "version": "3.5.0",
   "description": "PS4 Game Browser — Fuck DLPS",
-  "author": "Nookie",
+  "author": { "name": "Nookie", "email": "nookie@users.noreply.github.com" },
   "main": "main.js",
   "scripts": {
     "start":      "electron .",
@@ -62,13 +62,15 @@
       "icon":     "assets/icon1.icns",
       "category": "public.app-category.utilities"
     },
+    "publish": null,
     "linux": {
       "target": [
         { "target": "AppImage", "arch": ["x64"] },
         { "target": "deb",      "arch": ["x64"] }
       ],
-      "icon":     "assets/icon1.png",
-      "category": "Utility"
+      "icon":       "assets/icon1.png",
+      "category":   "Utility",
+      "maintainer": "Nookie <nookie@users.noreply.github.com>"
     },
     "compression": "maximum",
     "asar": true
