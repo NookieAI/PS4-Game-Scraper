@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v3.5.0)'
+        required: true
+        default: 'v3.5.0'
 
 permissions:
   contents: write
@@ -27,7 +32,7 @@ jobs:
       - name: Build Windows (portable exe)
         run: npm run dist:win
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false   # skip code-signing
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -50,26 +55,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Convert ico → icns  (requires only sips + iconutil, both built-in on macOS)
+      - name: Convert ico → icns
         run: |
           mkdir -p /tmp/iconbuild/icon.iconset
-          # Extract the best size from the ico using sips
           sips -s format png assets/icon1.ico --out /tmp/icon_tmp.png 2>/dev/null || true
-          # If ico extraction failed, create a plain fallback
           if [ ! -s /tmp/icon_tmp.png ]; then
             python3 -c "
           import struct, zlib
           def png1x1(r,g,b):
-              raw=struct.pack('>BBBBBBBBBBBBBB',r,g,b,255,0,0,0,0,0,0,0,0,0,0,0)
               raw=b'\\x00'+bytes([r,g,b,255])
-              idat=zlib.compress(b'\\x00'+bytes([30,30,30,255])*1)
               def c(t,d):
                   return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
               return b'\\x89PNG\\r\\n\\x1a\\n'+c(b'IHDR',struct.pack('>IIBBBBB',1,1,8,2,0,0,0))+c(b'IDAT',zlib.compress(b'\\x00\\x1e\\x1e\\x1e'))+c(b'IEND',b'')
           open('/tmp/icon_tmp.png','wb').write(png1x1(30,30,30))
           "
           fi
-          # Build all required iconset sizes
           for size in 16 32 64 128 256 512; do
             sips -z $size $size /tmp/icon_tmp.png --out /tmp/iconbuild/icon.iconset/icon_${size}x${size}.png
             double=$((size*2))
@@ -81,7 +81,7 @@ jobs:
       - name: Build macOS (dmg + zip, x64 + arm64)
         run: npm run dist:mac
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: false   # skip code-signing / notarisation
+          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -116,7 +116,6 @@ jobs:
         run: |
           convert assets/icon1.ico[0] -resize 512x512 assets/icon1.png 2>/dev/null || \
           python3 - <<'EOF'
-          # Pure-python fallback: solid 512x512 dark square png
           import struct, zlib
           W=H=512
           row=b'\x00'+b'\x1e\x1e\x1e\xff'*W
@@ -144,11 +143,10 @@ jobs:
             dist/*.deb
           if-no-files-found: error
 
-  # ── Release (runs only on version tags) ───────────────────────────────────
+  # ── Release (always runs — tag push OR manual dispatch) ───────────────────
   release:
     needs: [build-windows, build-mac, build-linux]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -156,8 +154,25 @@ jobs:
           path: release-files
           merge-multiple: true
 
+      - name: List release files
+        run: find release-files -type f
+
+      - name: Set release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: PS4 Game Browser ${{ steps.tag.outputs.tag }}
           files: release-files/**/*
           generate_release_notes: true
+          make_latest: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
