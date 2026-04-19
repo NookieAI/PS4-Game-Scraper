@@ -4,7 +4,7 @@
 
 ---
 
-A WindowsMac and Linux desktop app for browsing and finding PS4 game downloads. Browse a library of 2000+ titles, search by name, and open game detail modals showing region variants, firmware compatibility, mirror links, passwords, and language info - all fetched live so links are always current.
+A Windows, Mac and Linux desktop app for browsing and finding PS4 game downloads. Browse a library of 2000+ titles, search by name, and open game detail modals showing region variants, firmware compatibility, mirror links, passwords, and language info - all fetched live so links are always current.
 
 ---
 
