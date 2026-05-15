@@ -1,0 +1,288 @@
+name: Build PS4 Game Browser
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v4.0.0)'
+        required: true
+        default: 'v4.0.0'
+
+# contents:write needed to create the release and upload assets.
+permissions:
+  contents: write
+
+jobs:
+
+  # ── Stage 1: Create (or reuse) a draft release ──────────────────────────────
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+      tag:        ${{ steps.tag.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify versions are consistent across all sources
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          set -euo pipefail
+          CARGO_VERSION=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
+          CONF_VERSION=$(grep -m1 '"version"' src-tauri/tauri.conf.json | cut -d'"' -f4)
+          EXPECTED_TAG="v$CARGO_VERSION"
+
+          if [ "$CARGO_VERSION" != "$CONF_VERSION" ]; then
+            echo "::error::Cargo.toml ($CARGO_VERSION) and tauri.conf.json ($CONF_VERSION) disagree."
+            echo "::error::Fix: edit both files to the same version, commit, retag, re-push."
+            exit 1
+          fi
+
+          if [ "$TAG" != "$EXPECTED_TAG" ]; then
+            echo "::error::Tag $TAG doesn't match the source version (Cargo.toml=$CARGO_VERSION)."
+            echo "::error::Fix: bump Cargo.toml + tauri.conf.json to match the tag (or retag to v$CARGO_VERSION)."
+            exit 1
+          fi
+
+          echo "✓ Cargo.toml = tauri.conf.json = $CARGO_VERSION = $TAG"
+
+      - name: Create or reuse draft release
+        id: create
+        uses: actions/github-script@v7
+        with:
+          # Idempotent: reuse an existing release for this tag instead of
+          # failing on duplicate. Useful when re-running the workflow.
+          result-encoding: string
+          script: |
+            const tag = '${{ steps.tag.outputs.value }}';
+            try {
+              const { data: existing } = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                tag,
+              });
+              core.info(`Reusing existing release ${existing.id} for tag ${tag}`);
+              return existing.id.toString();
+            } catch (e) {
+              if (e.status !== 404) throw e;
+            }
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              tag_name: tag,
+              name:     `PS4 Game Browser ${tag}`,
+              draft:    true,
+              prerelease: false,
+              generate_release_notes: true,
+            });
+            core.info(`Created draft release ${data.id} for tag ${tag}`);
+            return data.id.toString();
+
+  # ── Stage 2: Build per-platform and upload renamed assets ───────────────────
+  build:
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            label:    windows
+            target:   x86_64-pc-windows-msvc
+            args:     ''
+          - platform: macos-14            # Apple Silicon — builds ARM natively
+            label:    mac-arm
+            target:   aarch64-apple-darwin
+            args:     '--target aarch64-apple-darwin'
+          - platform: macos-14            # Apple Silicon — cross-compiles to Intel
+            label:    mac-intel           # macos-13 is deprecated; macos-14 cross-builds x86_64 fine
+            target:   x86_64-apple-darwin
+            args:     '--target x86_64-apple-darwin'
+          - platform: ubuntu-22.04
+            label:    linux
+            target:   x86_64-unknown-linux-gnu
+            args:     ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # On macos-14 the dtolnay action occasionally installs the toolchain
+      # without setting it as the rustup default — leaving `cargo` as a
+      # rustup-init shim that fails with "unexpected argument 'metadata' found".
+      # Setting the default explicitly fixes it; the version print verifies.
+      - name: Set rustup default + verify
+        shell: bash
+        run: |
+          rustup default stable
+          rustup show
+          cargo --version
+          rustc --version
+
+      - name: Install Linux dependencies (Tauri v2)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf \
+            file \
+            build-essential
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.label }}
+
+      # Build only — NO releaseId, so tauri-action just produces bundles in
+      # src-tauri/target/<...>/release/bundle/. We rename + upload them ourselves
+      # in the next step using the user's preferred naming scheme.
+      - name: Build with tauri-action
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+          args:        ${{ matrix.args }}
+
+      - name: Rename and upload artifacts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG:      ${{ needs.create-release.outputs.tag }}
+          LABEL:    ${{ matrix.label }}
+          REPO:     ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # `find` is authoritative — tauri-action's artifactPaths is sometimes
+          # incomplete (drops sub-bundles).
+          #
+          # PORTABLE OUTPUTS:
+          #   Windows: src-tauri/target/release/<binary>.exe  (raw exe — built by cargo)
+          #   macOS:   src-tauri/target/<arch>/release/bundle/macos/<Product>.app  (we zip it)
+          #   Linux:   src-tauri/target/release/bundle/appimage/<binary>_<ver>_amd64.AppImage
+          #
+          # Bundle dir only relevant for macOS and Linux. Windows builds no bundle.
+          if [ "$LABEL" != "windows" ]; then
+            BUNDLE_DIR=$(find src-tauri/target -type d -path '*/release/bundle' | head -1)
+            if [ -z "$BUNDLE_DIR" ] || [ ! -d "$BUNDLE_DIR" ]; then
+              echo "::error::no bundle directory found under src-tauri/target"
+              exit 1
+            fi
+            echo "Bundle directory: $BUNDLE_DIR"
+            find "$BUNDLE_DIR" -type f -o -type d -name '*.app' | sort
+          fi
+
+          upload() {
+            local SRC="$1"; local NEW_NAME="$2"
+            if [ -z "$SRC" ] || [ ! -e "$SRC" ]; then
+              echo "  skip (not found): $NEW_NAME"
+              return 1
+            fi
+            local STAGED
+            STAGED="$(dirname "$SRC")/$NEW_NAME"
+            cp -f "$SRC" "$STAGED"
+            echo "  uploading: $NEW_NAME"
+            gh release upload "$TAG" "$STAGED" --clobber --repo "$REPO"
+          }
+
+          # Filenames include the tag for discoverability outside the app:
+          # users who download "PS4 Game Browser v4.0.0.exe" can tell at a
+          # glance which version they have. The in-app updater matches by
+          # file extension + arch substring, so it doesn't care about the
+          # version part of the name.
+          case "$LABEL" in
+            windows)
+              # Raw portable exe — Tauri 2 always builds this at target/release/<binary>.exe
+              # regardless of bundle.targets. Drop NSIS entirely.
+              SRC=$(find src-tauri/target/release -maxdepth 1 -name 'ps4-game-browser.exe' -type f | head -1)
+              upload "$SRC" "PS4 Game Browser $TAG.exe"
+              ;;
+            mac-arm)
+              # Zip the .app bundle. `ditto -ck --sequesterRsrc --keepParent`
+              # is the macOS-native way to zip preserving HFS+ metadata and
+              # the .app top-level directory (so unzip recreates "PS4 Game Browser.app").
+              APP=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' -type d | head -1)
+              if [ -n "$APP" ]; then
+                ZIP_PATH="$BUNDLE_DIR/macos/PS4 Game Browser ${TAG}_aarch64.app.zip"
+                (cd "$(dirname "$APP")" && ditto -ck --sequesterRsrc --keepParent "$(basename "$APP")" "$ZIP_PATH")
+                upload "$ZIP_PATH" "PS4 Game Browser ${TAG}_aarch64.app.zip"
+              else
+                echo "::error::no .app found at $BUNDLE_DIR/macos"
+                exit 1
+              fi
+              ;;
+            mac-intel)
+              APP=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' -type d | head -1)
+              if [ -n "$APP" ]; then
+                ZIP_PATH="$BUNDLE_DIR/macos/PS4 Game Browser ${TAG}_x64.app.zip"
+                (cd "$(dirname "$APP")" && ditto -ck --sequesterRsrc --keepParent "$(basename "$APP")" "$ZIP_PATH")
+                upload "$ZIP_PATH" "PS4 Game Browser ${TAG}_x64.app.zip"
+              else
+                echo "::error::no .app found at $BUNDLE_DIR/macos"
+                exit 1
+              fi
+              ;;
+            linux)
+              APPIMAGE=$(find "$BUNDLE_DIR" -type f -name '*.AppImage' | head -1)
+              upload "$APPIMAGE" "PS4 Game Browser ${TAG}_amd64.AppImage"
+              ;;
+            *)
+              echo "::error::unknown label: $LABEL"
+              exit 1
+              ;;
+          esac
+
+  # ── Stage 3: Flip draft to published ────────────────────────────────────────
+  publish-release:
+    needs: [create-release, build]
+    runs-on: ubuntu-latest
+    if: always() && needs.create-release.result == 'success'
+    steps:
+      - name: Publish draft as latest release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const release_id = parseInt('${{ needs.create-release.outputs.release_id }}', 10);
+            const { data: release } = await github.rest.repos.getRelease({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              release_id,
+            });
+            const asset_count = (release.assets || []).length;
+            core.info(`Release ${release_id} has ${asset_count} uploaded asset(s)`);
+            if (asset_count === 0) {
+              core.warning('No assets uploaded — leaving release as draft.');
+              return;
+            }
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              release_id,
+              draft: false,
+              make_latest: 'true',
+            });
+            core.info(`Published release ${release_id} with ${asset_count} asset(s)`);

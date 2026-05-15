@@ -1,0 +1,49 @@
+# ── Rust / Tauri build output ─────────────────────────────────────────────────
+# target/ holds GIGABYTES of compiled deps, debug symbols, and intermediate
+# objects. Never commit it — every push of target/ adds ~1GB to the repo.
+target/
+**/target/
+
+# Tauri's auto-generated capability schemas (regenerated on every build)
+src-tauri/gen/
+
+# ── OS noise ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# ── Editor / IDE noise ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+*.code-workspace
+
+# ── Node / frontend tooling (in case you ever add npm/pnpm/yarn) ─────────────
+node_modules/
+dist/
+.parcel-cache/
+.next/
+.vite/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Secrets — never commit ────────────────────────────────────────────────────
+*.env
+.env.*
+.claude/
+secrets/
+*.pem
+*.key
+
+# ── Local-only scratch ────────────────────────────────────────────────────────
+*.local
+.cache/
+tmp/
+
+# ── Tauri signing keypair (if you ever opt into signed updates) ───────────────
+*.signing-key
+*.signing-key.pub

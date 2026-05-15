@@ -1,0 +1,18 @@
+"$schema" = "../gen/schemas/default.schema.json"
+
+[default]
+description = "Permissions for the app's built-in commands (custom updater)"
+permissions = [
+    "allow-check-for-updates",
+    "allow-install-update",
+]
+
+[[permission]]
+identifier  = "allow-check-for-updates"
+description = "Allow the frontend to query GitHub for a newer release."
+commands.allow = ["check_for_updates"]
+
+[[permission]]
+identifier  = "allow-install-update"
+description = "Allow the frontend to download + apply a release update."
+commands.allow = ["install_update"]

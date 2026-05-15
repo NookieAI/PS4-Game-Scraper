@@ -1,0 +1,19 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main window: core APIs, shell.open for external URLs, scoped HTTP, custom updater commands.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-open",
+    "allow-check-for-updates",
+    "allow-install-update",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://*.r2.dev/*" },
+        { "url": "https://*.r2.dev" }
+      ]
+    }
+  ]
+}
