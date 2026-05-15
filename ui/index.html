@@ -661,7 +661,18 @@
       if(typeof UIHooks.buildMetaBadges==='function'){metaDetails.innerHTML=UIHooks.buildMetaBadges(meta);}
       else{
         const b=[];
-        (meta.cusa_ids||[]).forEach(id=>b.push(`<span class="meta-badge cusa"><b>CUSA</b>${escH(id)}</span>`));
+        // cusa_ids items may be strings OR objects (legacy cache had structured
+        // entries like {id, region, ...}). Extract the string ID either way,
+        // skip anything that doesn't yield a usable ID, and dedupe.
+        const cusaSet = new Set();
+        (meta.cusa_ids||[]).forEach(item => {
+          let id = '';
+          if (typeof item === 'string') id = item;
+          else if (item && typeof item === 'object') id = item.id || item.cusa || item.value || item.identifier || '';
+          id = String(id||'').trim();
+          if (id) cusaSet.add(id);
+        });
+        cusaSet.forEach(id => b.push(`<span class="meta-badge cusa"><b>CUSA</b>${escH(id)}</span>`));
         if(meta.genre)    b.push(`<span class="meta-badge"><b>Genre</b>${escH(meta.genre)}</span>`);
         if(meta.released) b.push(`<span class="meta-badge"><b>Year</b>${escH(meta.released)}</span>`);
         if(meta.language) b.push(`<span class="meta-badge"><b>Lang</b>${escH(meta.language)}</span>`);
