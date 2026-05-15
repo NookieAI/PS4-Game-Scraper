@@ -4,8 +4,8 @@
 
 **Browse, search, and download from a huge PS4 game library — all from one clean desktop app.**
 
-[![Latest Release](https://img.shields.io/github/v/release/NookieAI/PS4-Game-Browser?label=latest&color=00d4ff&style=for-the-badge)](https://github.com/NookieAI/PS4-Game-Browser/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/NookieAI/PS4-Game-Browser/total?color=00d4ff&style=for-the-badge)](https://github.com/NookieAI/PS4-Game-Browser/releases)
+[![Latest Release](https://img.shields.io/github/v/release/NookieAI/PS4-Game-Scraper?label=latest&color=00d4ff&style=for-the-badge)](https://github.com/NookieAI/PS4-Game-Scraper/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/NookieAI/PS4-Game-Scraper/total?color=00d4ff&style=for-the-badge)](https://github.com/NookieAI/PS4-Game-Scraper/releases)
 [![Platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-00d4ff?style=for-the-badge)](#-install)
 
 </div>
@@ -14,7 +14,7 @@
 
 ## ⬇️ Download
 
-Grab the right file for your computer from the **[Latest Release](https://github.com/NookieAI/PS4-Game-Browser/releases/latest)** page:
+Grab the right file for your computer from the **[Latest Release](https://github.com/NookieAI/PS4-Game-Scraper/releases/latest)** page:
 
 | Your computer | Download |
 |---|---|
@@ -43,7 +43,7 @@ Grab the right file for your computer from the **[Latest Release](https://github
 
 ### 🪟 Windows
 
-1. Download `PS4 Game Browser v*.exe` from the [releases page](https://github.com/NookieAI/PS4-Game-Browser/releases/latest).
+1. Download `PS4 Game Browser v*.exe` from the [releases page](https://github.com/NookieAI/PS4-Game-Scraper/releases/latest).
 2. Put it anywhere you like — Desktop, Downloads, a folder on your D: drive, even a USB stick. **No installer.**
 3. Double-click to run.
 4. **Windows will probably show a blue "Windows protected your PC" screen** — this happens to every small app that doesn't pay Microsoft for a code-signing certificate. Click **More info**, then **Run anyway**.
@@ -132,7 +132,7 @@ A few things to check:
 - Make sure your computer can reach `github.com` (corporate firewalls sometimes block it).
 - Close and reopen the app — the check runs 8 seconds after startup.
 - If you've been opening and closing the app dozens of times within an hour, GitHub may have rate-limited your IP for an hour. Wait and try again.
-- If you click **OK** on the update but nothing happens, your antivirus may be blocking the installer. Temporarily disable it and try again, or download manually from the [releases page](https://github.com/NookieAI/PS4-Game-Browser/releases/latest).
+- If you click **OK** on the update but nothing happens, your antivirus may be blocking the installer. Temporarily disable it and try again, or download manually from the [releases page](https://github.com/NookieAI/PS4-Game-Scraper/releases/latest).
 </details>
 
 <details>
@@ -175,7 +175,7 @@ If you want to clear remembered settings too: delete the small config file the a
 
 ## 💬 Found a bug? Have a request?
 
-Open an [Issue](https://github.com/NookieAI/PS4-Game-Browser/issues) and describe what happened. Screenshots help a lot.
+Open an [Issue](https://github.com/NookieAI/PS4-Game-Scraper/issues) and describe what happened. Screenshots help a lot.
 
 ---
 

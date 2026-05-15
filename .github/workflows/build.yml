@@ -204,7 +204,10 @@ jobs:
             fi
             local STAGED
             STAGED="$(dirname "$SRC")/$NEW_NAME"
-            cp -f "$SRC" "$STAGED"
+            # If the source is already named correctly (mac .app.zip case), skip cp.
+            if [ "$SRC" != "$STAGED" ]; then
+              cp -f "$SRC" "$STAGED"
+            fi
             echo "  uploading: $NEW_NAME"
             gh release upload "$TAG" "$STAGED" --clobber --repo "$REPO"
           }
@@ -225,11 +228,17 @@ jobs:
               # Zip the .app bundle. `ditto -ck --sequesterRsrc --keepParent`
               # is the macOS-native way to zip preserving HFS+ metadata and
               # the .app top-level directory (so unzip recreates "PS4 Game Browser.app").
+              # Build the zip with a FILENAME-only target inside the cd, then
+              # reference it from the parent shell with the full path. Using
+              # a relative path with embedded slashes inside cd creates a
+              # bizarre nested directory and breaks the upload.
               APP=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' -type d | head -1)
               if [ -n "$APP" ]; then
-                ZIP_PATH="$BUNDLE_DIR/macos/PS4 Game Browser ${TAG}_aarch64.app.zip"
-                (cd "$(dirname "$APP")" && ditto -ck --sequesterRsrc --keepParent "$(basename "$APP")" "$ZIP_PATH")
-                upload "$ZIP_PATH" "PS4 Game Browser ${TAG}_aarch64.app.zip"
+                APP_DIR="$(dirname "$APP")"
+                APP_NAME="$(basename "$APP")"
+                ZIP_NAME="PS4 Game Browser ${TAG}_aarch64.app.zip"
+                ( cd "$APP_DIR" && ditto -ck --sequesterRsrc --keepParent "$APP_NAME" "$ZIP_NAME" )
+                upload "$APP_DIR/$ZIP_NAME" "$ZIP_NAME"
               else
                 echo "::error::no .app found at $BUNDLE_DIR/macos"
                 exit 1
@@ -238,9 +247,11 @@ jobs:
             mac-intel)
               APP=$(find "$BUNDLE_DIR/macos" -maxdepth 1 -name '*.app' -type d | head -1)
               if [ -n "$APP" ]; then
-                ZIP_PATH="$BUNDLE_DIR/macos/PS4 Game Browser ${TAG}_x64.app.zip"
-                (cd "$(dirname "$APP")" && ditto -ck --sequesterRsrc --keepParent "$(basename "$APP")" "$ZIP_PATH")
-                upload "$ZIP_PATH" "PS4 Game Browser ${TAG}_x64.app.zip"
+                APP_DIR="$(dirname "$APP")"
+                APP_NAME="$(basename "$APP")"
+                ZIP_NAME="PS4 Game Browser ${TAG}_x64.app.zip"
+                ( cd "$APP_DIR" && ditto -ck --sequesterRsrc --keepParent "$APP_NAME" "$ZIP_NAME" )
+                upload "$APP_DIR/$ZIP_NAME" "$ZIP_NAME"
               else
                 echo "::error::no .app found at $BUNDLE_DIR/macos"
                 exit 1

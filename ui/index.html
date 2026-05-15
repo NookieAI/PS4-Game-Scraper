@@ -19,6 +19,13 @@
     .search-clear { position: absolute; top: 50%; right: 8px; transform: translateY(-50%); width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: #777; cursor: pointer; font-size: 18px; line-height: 20px; text-align: center; font-weight: normal; display: none; transition: color 0.15s; min-width: 0; }
     .search-clear:hover { background: transparent; color: #fff; }
     .search-wrap.has-text .search-clear { display: block; }
+    .filter-row { display: flex; gap: 6px; margin: 10px 8px 0 8px; flex-wrap: wrap; align-items: center; }
+    .filter-label { color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 4px; }
+    .filter-btn { padding: 5px 11px; background: #2a2a2a; border: 1px solid #444; color: #bbb; border-radius: 14px; cursor: pointer; font-size: 12px; transition: all 0.15s; min-width: 0; }
+    .filter-btn:hover { color: #fff; border-color: #4ab4ff; background: #333; }
+    .filter-btn.active { background: #4ab4ff; color: #fff; border-color: #4ab4ff; font-weight: 600; }
+    .filter-count { margin-left: auto; color: #777; font-size: 12px; }
+    @media (max-width: 600px) { .filter-row { margin: 8px 0 0 0; } }
     .action-buttons { display: flex; gap: 10px; }
     button { min-width: 140px; padding: 5px 30px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 8px; cursor: pointer; transition: all 0.3s ease; }
     button:hover { background: rgba(255,255,255,0.3); }
@@ -121,7 +128,7 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M23.881 8.948c-.773-4.085-4.859-4.733-4.859-4.733H0v13.89c0 .946.778 1.745 1.73 1.745h16.365c0 0 4.583-.04 5.364-4.402.281-1.527.027-3.556-1.016-5.12l.438-.028c0 0-.035-.09-.047-.24l.047-.01c-.001-.048.006-.084.006-.084l-.002-.018zm-3.68 5.56c-.515 1.545-2.044 2.012-3.06 2.012H2.717V7.162h14.268c0 0 2.613.195 3.005 2.743.18 1.17.013 2.918-.789 4.603z"/><circle cx="17.5" cy="11.5" r="1.5"/></svg>
         Support on Ko-fi
       </a>
-      <a class="social-link" data-href="https://github.com/NookieAI/PS4-Game-Browser">
+      <a class="social-link" data-href="https://github.com/NookieAI/PS4-Game-Scraper">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
         GitHub
       </a>
@@ -488,11 +495,36 @@
         resultsEl.appendChild(d);
       }
     }
+    // ── Filters ────────────────────────────────────────────────────────────
+    // Card-level data is title-only, so filters use title regexes plus the
+    // genre/type fields we preserved at load time. \b word boundaries keep
+    // VR from matching titles like "Universe of Verse"; PSVR is folded
+    // into the VR filter on purpose (PS4 VR games carry the PSVR label).
+    let activeFilter='all';
+    const FILTERS={
+      all:    ()=>true,
+      vr:     g=>/\b(VR|PSVR)\b/i.test(g.title) || /\b(VR|PSVR)\b/i.test(g._genre||''),
+      demo:   g=>/\b(demo|trial)\b/i.test(g.title) || /\bdemo\b/i.test(g._type||''),
+      dlc:    g=>/\b(DLC|expansion|season pass)\b/i.test(g.title) || /\b(dlc|addon|add-on)\b/i.test(g._type||''),
+      update: g=>/\b(update|patch|fix)\b/i.test(g.title),
+    };
     function doSearch(){
       const t=searchInput.value.trim().toLowerCase();
-      filtered=t?allGames.filter(g=>g.title.toLowerCase().includes(t)):allGames.slice();
+      const fn=FILTERS[activeFilter]||FILTERS.all;
+      filtered=allGames.filter(fn).filter(g=>!t||g.title.toLowerCase().includes(t));
       renderGames(filtered);
+      const fc=document.getElementById('filterCount');
+      if(fc) fc.textContent = (activeFilter==='all'&&!t)?'':`${filtered.length} of ${allGames.length}`;
     }
+    document.querySelectorAll('.filter-btn').forEach(btn=>{
+      btn.addEventListener('click',()=>{
+        const cur=document.querySelector('.filter-btn.active');
+        if(cur)cur.classList.remove('active');
+        btn.classList.add('active');
+        activeFilter=btn.dataset.filter;
+        doSearch();
+      });
+    });
 
     // ── Boot ──────────────────────────────────────────────────────────────────
     window.addEventListener('DOMContentLoaded', async()=>{
@@ -504,7 +536,7 @@
       showProg('Loading library…');
       try {
         const arr=await loadCache();
-        allGames=arr.map(e=>({url:e.url||'',title:e.title||'',image:findCover(e.screenshots)}));
+        allGames=arr.map(e=>({url:e.url||'',title:e.title||'',image:findCover(e.screenshots),_genre:(e.extra&&e.extra.genre)||'',_type:(e.extra&&e.extra.type)||''}));
         filtered=allGames.slice(); renderGames(allGames);
         showStatus(`Loaded ${allGames.length} games`);
       } catch(e) {
@@ -568,7 +600,7 @@
       setBtns(false);showProg('Refreshing…');
       try {
         const arr=await loadCache(true);
-        allGames=arr.map(e=>({url:e.url||'',title:e.title||'',image:findCover(e.screenshots)}));
+        allGames=arr.map(e=>({url:e.url||'',title:e.title||'',image:findCover(e.screenshots),_genre:(e.extra&&e.extra.genre)||'',_type:(e.extra&&e.extra.type)||''}));
         filtered=allGames.slice();doSearch();
         showStatus(`Refreshed ${allGames.length} games`);
       } catch(e){showStatus('Refresh failed: '+(e.message||e),false);}

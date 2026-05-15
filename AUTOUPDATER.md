@@ -1,6 +1,6 @@
 # Auto-Updater (no signing required)
 
-The app checks `https://api.github.com/repos/NookieAI/PS4-Game-Browser/releases/latest` 8 seconds after launch. If a newer version is found, the user gets a confirmation dialog, accepts, and the app downloads + installs + relaunches.
+The app checks `https://api.github.com/repos/NookieAI/PS4-Game-Scraper/releases/latest` 8 seconds after launch. If a newer version is found, the user gets a confirmation dialog, accepts, and the app downloads + installs + relaunches.
 
 **No keypair. No signing. No setup.** Just push a tag and the workflow builds + uploads bundles. Running apps pick up the new release on next launch.
 
