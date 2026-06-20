@@ -160,10 +160,38 @@ jobs:
       # Build only — NO releaseId, so tauri-action just produces bundles in
       # src-tauri/target/<...>/release/bundle/. We rename + upload them ourselves
       # in the next step using the user's preferred naming scheme.
+      # Point cover images + ui_patch.* at the token-gated Worker host on release
+      # builds. The host is derived from CATALOG_URL, so no extra secret is needed;
+      # it's a no-op when CATALOG_URL is unset (local/dev builds keep the public
+      # CDN). Runs BEFORE the build so the rewritten ui/index.html, CSP, and HTTP
+      # capability are what gets compiled into the binary. The repo source is
+      # never modified — only this ephemeral CI checkout.
+      - name: Mask image CDN for release
+        shell: bash
+        env:
+          CATALOG_URL: ${{ secrets.CATALOG_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CATALOG_URL:-}" ]; then
+            echo "CATALOG_URL not set — keeping public image CDN (dev/unconfigured build)."
+            exit 0
+          fi
+          HOST=$(printf '%s' "$CATALOG_URL" | sed -E 's#^https?://([^/]+).*#\1#')
+          echo "Masking image CDN -> $HOST"
+          perl -i -pe "s/pub-[0-9a-f]+\.r2\.dev/$HOST/g"            ui/index.html
+          perl -i -pe "s#https://\*\.r2\.dev#https://$HOST#g"       src-tauri/tauri.conf.json
+          perl -i -pe "s#https://\*\.r2\.dev#https://$HOST#g"       src-tauri/capabilities/default.json
+          grep -q "$HOST" ui/index.html && echo "  ui/index.html CDN host rewritten" || { echo "::error::CDN rewrite did not apply"; exit 1; }
+
       - name: Build with tauri-action
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN:  ${{ secrets.GITHUB_TOKEN }}
+          # Token-gated catalog config, compiled into the binary via option_env!
+          # in main.rs. Empty when the secrets aren't set, so the app falls back
+          # to the public CDN — a safe no-op until you add these two repo secrets.
+          CATALOG_URL:   ${{ secrets.CATALOG_URL }}
+          CATALOG_TOKEN: ${{ secrets.CATALOG_TOKEN }}
         with:
           projectPath: src-tauri
           args:        ${{ matrix.args }}

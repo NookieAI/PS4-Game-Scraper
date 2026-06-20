@@ -1,6 +1,6 @@
 [package]
 name    = "ps4-game-browser"
-version = "4.0.0"
+version = "4.1.0"
 edition = "2021"
 
 [features]
@@ -11,7 +11,7 @@ custom-protocol  = ["tauri/custom-protocol"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri              = { version = "2" }
+tauri              = { version = "2", features = [] }
 tauri-plugin-http  = "2"
 tauri-plugin-shell = "2"
 # Second-launch prevention. When a second copy of the exe runs, it sends its

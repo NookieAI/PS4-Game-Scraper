@@ -8,6 +8,7 @@
     "shell:allow-open",
     "allow-check-for-updates",
     "allow-install-update",
+    "allow-fetch-catalog",
     {
       "identifier": "http:default",
       "allow": [

@@ -7,6 +7,11 @@
 // bundle metadata (tauri.conf.json version).
 
 fn main() {
+    // Recompile when the token-gated catalog secrets change so option_env! in
+    // main.rs picks up new values — env!/option_env! do NOT trigger a rebuild on
+    // their own, so without this, rotating CATALOG_TOKEN would reuse a stale build.
+    println!("cargo:rerun-if-env-changed=CATALOG_URL");
+    println!("cargo:rerun-if-env-changed=CATALOG_TOKEN");
     verify_version_consistency();
     tauri_build::build()
 }

@@ -100,7 +100,15 @@ async fn check_for_updates() -> Result<UpdateInfo, String> {
 
 #[tauri::command]
 async fn install_update(download_url: String,
-                        asset_name:   Option<String>) -> Result<String, String> {
+                        asset_name:   Option<String>,
+                        asset_size:   Option<u64>) -> Result<String, String> {
+    // install_update overwrites and relaunches the running exe, so refuse any
+    // download that isn't an HTTPS GitHub release host — even if a caller (or
+    // injected page script) hands us an arbitrary URL.
+    if !is_allowed_download_url(&download_url) {
+        return Err(format!("refused: download URL is not a trusted GitHub host ({download_url})"));
+    }
+
     // Download the installer to a temp file. 5min timeout covers slow
     // connections without freezing forever on a stalled download.
     let client = reqwest::Client::builder()
@@ -119,14 +127,28 @@ async fn install_update(download_url: String,
         .await
         .map_err(|e| format!("download body: {e}"))?;
 
+    // Reject a truncated download (e.g. a CDN/proxy cutoff that still returned
+    // 200) before it can overwrite the working exe with a corrupt binary.
+    if let Some(expected) = asset_size {
+        if bytes.len() as u64 != expected {
+            return Err(format!(
+                "downloaded {} bytes but expected {expected}; aborting to avoid a corrupt update",
+                bytes.len()
+            ));
+        }
+    }
+
     // Prefer the API-supplied filename (preserves spaces in "PS4 Game Browser.exe"
-    // etc). Fall back to URL basename with %20 decoded if not provided.
-    let safe_name = asset_name.unwrap_or_else(|| {
+    // etc). Fall back to URL basename with %20 decoded if not provided. Then
+    // reduce it to a sanitized bare filename so it can't escape the temp dir or
+    // break out of a quoted path in the generated updater script.
+    let raw_name = asset_name.unwrap_or_else(|| {
         download_url.rsplit('/')
             .next()
             .unwrap_or("ps4-game-browser-update.bin")
             .replace("%20", " ")
     });
+    let safe_name = sanitize_filename(&raw_name, "ps4-game-browser-update.bin");
 
     let temp_dir = std::env::temp_dir();
     let temp_file = temp_dir.join(&safe_name);
@@ -137,8 +159,10 @@ async fn install_update(download_url: String,
         .map_err(|e| format!("current_exe: {e}"))?;
     let pid = std::process::id();
 
-    spawn_updater(&temp_file, &current_exe, pid)
-        .map_err(|e| format!("spawn updater: {e}"))?;
+    if let Err(e) = spawn_updater(&temp_file, &current_exe, pid) {
+        let _ = std::fs::remove_file(&temp_file);   // don't orphan the download
+        return Err(format!("spawn updater: {e}"));
+    }
 
     Ok("Update downloaded — app will restart momentarily.".to_string())
 }
@@ -162,12 +186,47 @@ async fn fetch_latest_release() -> Result<GithubRelease, String> {
     resp.json::<GithubRelease>().await.map_err(|e| e.to_string())
 }
 
+/// Reduce a server-supplied asset name to a safe bare filename: keep only the
+/// final path component and a conservative character allowlist, so the value
+/// can't escape the temp dir (`..`, separators, drive prefixes) or break out of
+/// a quoted path in the generated updater script. Falls back to `default`.
+fn sanitize_filename(name: &str, default: &str) -> String {
+    let base = std::path::Path::new(name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(default);
+    let cleaned: String = base
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | ' '))
+        .collect();
+    let cleaned = cleaned.trim();
+    if cleaned.is_empty() || cleaned == "." || cleaned == ".." {
+        default.to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+/// True only for the canonical release-asset URL of THIS repo, i.e.
+/// `https://github.com/<OWNER>/<REPO>/releases/download/...` (which github.com
+/// then 302-redirects to objects.githubusercontent.com; reqwest follows that
+/// internally). Pinning the full owner/repo prefix — not just the host — means
+/// an injected caller can't redirect the updater at another repo's
+/// attacker-controlled asset.
+fn is_allowed_download_url(url: &str) -> bool {
+    let expected = format!("https://github.com/{GH_OWNER}/{GH_REPO}/releases/download/");
+    url.starts_with(&expected)
+}
+
 /// Strict semver-ish comparison: split on '.' and compare numeric segments.
 /// "1.2.3" > "1.2.0"  ;  "1.2.0" > "1.1.5" ;  "1.2" == "1.2.0".
 /// Non-numeric junk in either side compares as 0 for that segment.
 fn is_newer(latest: &str, current: &str) -> bool {
     fn parts(s: &str) -> Vec<u32> {
-        s.split(|c: char| c == '.' || c == '-')
+        // Compare the numeric release core only; drop any pre-release/build
+        // suffix after '-' so a tag like "1.2.0-2" can't sort ABOVE "1.2.0".
+        s.split('-').next().unwrap_or(s)
+            .split('.')
             .filter_map(|p| p.parse().ok())
             .collect()
     }
@@ -245,8 +304,15 @@ timeout /t 1 /nobreak >nul
 goto waitloop
 :proceed
 timeout /t 2 /nobreak >nul
-del /F /Q "{current_exe}"
+move /Y "{current_exe}" "{current_exe}.bak"
+if errorlevel 1 goto launch
 move /Y "{downloaded}" "{current_exe}"
+if errorlevel 1 (
+  move /Y "{current_exe}.bak" "{current_exe}"
+  goto launch
+)
+del /F /Q "{current_exe}.bak"
+:launch
 timeout /t 1 /nobreak >nul
 start "" "{current_exe}"
 del "%~f0"
@@ -457,6 +523,18 @@ if [ -z "$NEW_APP" ]; then
     exit 1
 fi
 
+# $NEW_APP comes from inside the downloaded zip; reject a bundle name containing
+# a quote/backslash so it can't break out of the single-quoted ELEVATED_SCRIPT
+# string that runs under `osascript ... with administrator privileges`.
+case "$NEW_APP" in
+    *\'*|*\"*|*\\*)
+        rm -rf "{unzip}" "{downloaded}"
+        osascript -e 'display alert "Update failed: unsafe characters in update bundle path."' >/dev/null 2>&1 || true
+        rm -f "$0"
+        exit 1
+        ;;
+esac
+
 # Try direct replace first (no password prompt). Works for: app in
 # ~/Applications, or /Applications when the user owns the dir.
 DIRECT_OK=0
@@ -495,6 +573,39 @@ rm -f "$0"
 }
 
 // ── Tauri entrypoint ─────────────────────────────────────────────────────────
+/// Fetch the catalog JSON through the token-gated Cloudflare Worker. The Worker
+/// URL and shared secret are compiled in from build-time env (CATALOG_URL /
+/// CATALOG_TOKEN), so the token lives in the binary and never reaches the
+/// webview — a compromised ui_patch.js cannot read it. Returns Err("not
+/// configured") when the build has no token, letting the frontend fall back to
+/// the legacy public CDN during rollout. `bust` is an optional cache-buster
+/// supplied by JS on a forced refresh.
+#[tauri::command]
+async fn fetch_catalog(bust: Option<String>) -> Result<String, String> {
+    let base = option_env!("CATALOG_URL").unwrap_or("");
+    let token = option_env!("CATALOG_TOKEN").unwrap_or("");
+    if base.is_empty() || token.is_empty() {
+        return Err("not configured".into());
+    }
+    let url = match bust.as_deref() {
+        Some(b) if !b.is_empty() => format!("{base}?t={b}"),
+        _ => base.to_string(),
+    };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .get(&url)
+        .header("X-App-Token", token)
+        .send()
+        .await
+        .map_err(|e| format!("catalog request: {e}"))?
+        .error_for_status()
+        .map_err(|e| format!("catalog status: {e}"))?;
+    resp.text().await.map_err(|e| format!("catalog body: {e}"))
+}
+
 fn main() {
     tauri::Builder::default()
         // single-instance MUST be registered first. When a second copy of the
@@ -514,6 +625,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             check_for_updates,
             install_update,
+            fetch_catalog,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PS4 Game Browser");
