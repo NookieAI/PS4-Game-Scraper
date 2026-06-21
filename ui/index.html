@@ -111,9 +111,26 @@
       .modal-content { width: 97vw; border-radius: 10px; } .modal-header { padding: 16px 14px 14px; } .modal-header .game-cover { width: 110px; height: 145px; }
       .modal-body { padding: 12px 12px 16px; } .dl-row-label { min-width: 90px; } .modal-screenshot-row img { height: 110px; }
     }
+    /* ── Auto-update banner (styled; replaces native confirm dialogs) ─────── */
+    #updateBanner button { min-width: 0; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; transition: filter 0.15s; }
+    #updateBanner button:hover { filter: brightness(0.92); }
+    #updateBanner button:disabled { opacity: 0.6; cursor: default; filter: none; }
+    #updateProgressBar { position: relative; overflow: hidden; }
+    #updateProgressFill.indet { position: absolute; width: 35%; left: 0; animation: ubSlide 1.1s ease-in-out infinite; }
+    @keyframes ubSlide { 0% { left: -35%; } 100% { left: 100%; } }
   </style>
 </head>
 <body>
+  <div id="updateBanner" style="display:none; align-items:center; justify-content:space-between; background:#1a6ed8; color:#fff; padding:7px 16px; font-size:13px; gap:12px;">
+    <span id="updateBannerText"></span>
+    <div style="display:flex; gap:8px; flex-shrink:0;">
+      <button type="button" id="updateNowBtn" style="background:#fff; color:#1a3a6e; font-weight:600; padding:4px 16px;">Update Now</button>
+      <button type="button" id="updateLaterBtn" style="background:transparent; color:#fff; border:1px solid rgba(255,255,255,.5); padding:4px 12px;">Later</button>
+    </div>
+  </div>
+  <div id="updateProgressBar" style="display:none; height:4px; background:#0d4a99;">
+    <div id="updateProgressFill" style="height:100%; width:0%; background:#7cc4ff;"></div>
+  </div>
   <div class="container">
     <h1>PS4 Game Browser</h1>
     <div id="socialBar">
@@ -536,7 +553,12 @@
 
     // ── Boot ──────────────────────────────────────────────────────────────────
     window.addEventListener('DOMContentLoaded', async()=>{
-      await applyPatches();
+      // Patch channel is OPTIONAL and must NEVER block or blank the boot. Cap it
+      // with a timeout and swallow errors so a missing/slow/unreachable ui_patch.*
+      // (e.g. a CDN/Worker hiccup) can't halt the whole app before the library
+      // renders. This is what white-screened v4.1.0 — applyPatches() was awaited
+      // unguarded as the first boot step.
+      try { await Promise.race([applyPatches(), new Promise(r=>setTimeout(r,6000))]); } catch(_e) {}
       updateSortBtn();
       document.querySelectorAll('#socialBar [data-href]').forEach(el=>
         el.addEventListener('click',e=>{e.preventDefault();openExternal(el.dataset.href);})
@@ -552,16 +574,12 @@
         showStatus('Failed to load: '+(e.message||e),false);
       } finally { hideProg(); setBtns(true); }
 
-      // ── Silent auto-update check ──────────────────────────────────────────
+      // ── Auto-update check → styled top banner (no native confirm dialogs) ──
       // Fires 8s after boot so the initial cache load runs first. Hits the
-      // GitHub releases API via a Rust command (no signing, no plugin —
-      // just a version compare + installer download + spawn script).
-      //
-      // Error policy:
-      //   • check_for_updates failure → silent (it's a background check)
-      //   • install_update failure   → loud (user clicked Yes, they need
-      //                                 to know what happened so they can
-      //                                 retry or download manually)
+      // GitHub releases API via the check_for_updates Rust command, then shows
+      // a top banner (Update Now / Later) instead of a plain browser confirm().
+      // Tauri's install_update is a single blocking call with no progress
+      // events, so the bar is indeterminate (animated), not a real percentage.
       setTimeout(async () => {
         let info;
         try {
@@ -571,37 +589,51 @@
         } catch (_) { return; /* silent — background check */ }
         if (!info || !info.available) return;
 
+        const banner   = document.getElementById('updateBanner');
+        const text     = document.getElementById('updateBannerText');
+        const nowBtn   = document.getElementById('updateNowBtn');
+        const laterBtn = document.getElementById('updateLaterBtn');
+        const pbar     = document.getElementById('updateProgressBar');
+        const pfill    = document.getElementById('updateProgressFill');
+        if (!banner || !text || !nowBtn || !laterBtn) return;
+        const hide = () => { banner.style.display='none'; if(pbar) pbar.style.display='none'; };
+        laterBtn.onclick = hide;
+
+        // No automatic installer for this platform → offer the release page.
         if (info.error) {
-          const go = confirm(`Update v${info.latest} available, but no automatic installer for this platform. Open release page?`);
-          if (go && info.release_url) openExternal(info.release_url);
+          text.textContent = `🆕 v${info.latest} is available — no auto-installer for this platform`;
+          nowBtn.textContent = 'Open Release';
+          nowBtn.onclick = () => { if (info.release_url) openExternal(info.release_url); hide(); };
+          banner.style.display = 'flex';
           return;
         }
 
-        const sizeMb = info.asset_size ? ` (${(info.asset_size/1048576).toFixed(1)} MB)` : '';
-        const proceed = confirm(
-          `Update available: v${info.latest}${sizeMb}\n\n` +
-          `Currently running: v${info.current}\n\n` +
-          `Download and install now? The app will close and reopen automatically.`
-        );
-        if (!proceed) return;
+        const sizeMb = info.asset_size ? ` · ${(info.asset_size/1048576).toFixed(0)} MB` : '';
+        text.textContent = `🆕 PS4 Game Browser v${info.latest} is available (you have v${info.current})${sizeMb}`;
+        banner.style.display = 'flex';
 
-        showStatus(`Downloading v${info.latest}, this may take a minute…`);
-        try {
-          const inv = window.__TAURI_INTERNALS__.invoke;
-          await inv('install_update', {
-            downloadUrl: info.download_url,
-            assetName:   info.asset_name,
-            assetSize:   info.asset_size,
-          });
-        } catch (e) {
-          // Download/install failed — surface it. Don't close the window;
-          // user can keep using v${current} and retry next launch.
-          const msg = (e && e.toString && e.toString()) || 'unknown error';
-          showStatus(`Update failed: ${msg}`, false);
-          return;
-        }
-        showStatus(`Update downloaded — restarting…`);
-        setTimeout(() => window.close(), 1500);
+        nowBtn.onclick = async () => {
+          nowBtn.disabled = true; laterBtn.disabled = true;
+          nowBtn.textContent = 'Updating…';
+          text.textContent = `Downloading v${info.latest}…`;
+          if (pbar && pfill) { pfill.classList.add('indet'); pbar.style.display='block'; }
+          try {
+            await window.__TAURI_INTERNALS__.invoke('install_update', {
+              downloadUrl: info.download_url,
+              assetName:   info.asset_name,
+              assetSize:   info.asset_size,
+            });
+          } catch (e) {
+            text.textContent = `Update failed: ${(e && e.toString && e.toString()) || 'unknown error'}`;
+            nowBtn.disabled = false; laterBtn.disabled = false;
+            nowBtn.textContent = 'Update Now';
+            if (pbar && pfill) { pfill.classList.remove('indet'); pbar.style.display='none'; }
+            return;
+          }
+          text.textContent = 'Update downloaded — restarting…';
+          if (pfill) { pfill.classList.remove('indet'); pfill.style.width='100%'; }
+          setTimeout(() => window.close(), 1500);
+        };
       }, 8000);
     });
 

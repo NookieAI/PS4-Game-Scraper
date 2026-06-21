@@ -1,5 +1,4 @@
 <div align="center">
-<img width="1920" height="1032" alt="image" src="https://github.com/user-attachments/assets/31181289-75d5-438f-a6e6-16dddfd4e535" />
 
 # 🎮 PS4 Game Browser
 
