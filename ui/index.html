@@ -111,26 +111,9 @@
       .modal-content { width: 97vw; border-radius: 10px; } .modal-header { padding: 16px 14px 14px; } .modal-header .game-cover { width: 110px; height: 145px; }
       .modal-body { padding: 12px 12px 16px; } .dl-row-label { min-width: 90px; } .modal-screenshot-row img { height: 110px; }
     }
-    /* ── Auto-update banner (styled; replaces native confirm dialogs) ─────── */
-    #updateBanner button { min-width: 0; border: none; border-radius: 6px; cursor: pointer; font-size: 12px; transition: filter 0.15s; }
-    #updateBanner button:hover { filter: brightness(0.92); }
-    #updateBanner button:disabled { opacity: 0.6; cursor: default; filter: none; }
-    #updateProgressBar { position: relative; overflow: hidden; }
-    #updateProgressFill.indet { position: absolute; width: 35%; left: 0; animation: ubSlide 1.1s ease-in-out infinite; }
-    @keyframes ubSlide { 0% { left: -35%; } 100% { left: 100%; } }
   </style>
 </head>
 <body>
-  <div id="updateBanner" style="display:none; align-items:center; justify-content:space-between; background:#1a6ed8; color:#fff; padding:7px 16px; font-size:13px; gap:12px;">
-    <span id="updateBannerText"></span>
-    <div style="display:flex; gap:8px; flex-shrink:0;">
-      <button type="button" id="updateNowBtn" style="background:#fff; color:#1a3a6e; font-weight:600; padding:4px 16px;">Update Now</button>
-      <button type="button" id="updateLaterBtn" style="background:transparent; color:#fff; border:1px solid rgba(255,255,255,.5); padding:4px 12px;">Later</button>
-    </div>
-  </div>
-  <div id="updateProgressBar" style="display:none; height:4px; background:#0d4a99;">
-    <div id="updateProgressFill" style="height:100%; width:0%; background:#7cc4ff;"></div>
-  </div>
   <div class="container">
     <h1>PS4 Game Browser</h1>
     <div id="socialBar">
@@ -414,11 +397,47 @@
     // ── Cache store ───────────────────────────────────────────────────────────
     let _arr=[], _map=new Map(), _ts=0;
 
+    // Promise timeout guard — rejects if `p` doesn't settle within `ms`, so a
+    // stalled catalog origin can't hang the boot forever on "Loading library…".
+    function withTimeout(p, ms, label) {
+      return Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(() => rej(new Error((label||'operation')+' timed out')), ms)),
+      ]);
+    }
+    // Persisted catalog cache (written via Rust to the app-data dir). Lets a cold
+    // start render the last-good library instantly and survive an offline launch
+    // or the catalog origin going away. Best-effort: all failures are swallowed so
+    // the live network path stays authoritative.
+    async function readDiskCache() {
+      try {
+        const inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+        if (typeof inv !== 'function') return null;
+        const s = await inv('read_catalog_cache');
+        if (!s) return null;
+        const a = JSON.parse(s);
+        return Array.isArray(a) && a.length ? a : null;
+      } catch (_e) { return null; }
+    }
+    async function writeDiskCache(arr) {
+      try {
+        const inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+        if (typeof inv !== 'function' || !Array.isArray(arr) || !arr.length) return;
+        await inv('write_catalog_cache', { data: JSON.stringify(arr) });
+      } catch (_e) {}
+    }
+    // Map a raw cache entry to the lightweight render object. The _hay search
+    // index is the only per-platform field (cusa here / ppsa on the PS5 twin).
+    function toGame(e){
+      return {url:e.url||'',title:e.title||'',image:findCover(e.screenshots),_date:Date.parse(e.scraped_at||'')||0,_hay:(e.title+' '+(((e.extra&&e.extra.cusa_ids)||[]).map(c=>(c.cusa||'')+' '+(c.region||'')).join(' '))+' '+((e.extra&&e.extra.cusa_id)||'')).toLowerCase()};
+    }
+
     async function loadCache(force) {
       if (_arr.length&&!force) return _arr;
       const a = await fetchCatalog(force);
       if (!Array.isArray(a)) throw new Error('Cache response is not an array');
       _arr=a; _map=new Map(a.map(e=>[e.url,e])); _ts=Date.now();
+      writeDiskCache(a);  // persist last-good (fire-and-forget) for offline / cold-start
       return a;
     }
     // Prefer the token-gated Rust command (fetch_catalog) — the secret lives in
@@ -564,76 +583,51 @@
         el.addEventListener('click',e=>{e.preventDefault();openExternal(el.dataset.href);})
       );
       showProg('Loading library…');
+      // Seed instantly from the last-good on-disk cache so a cold start renders
+      // even offline or when the catalog origin is unreachable; then refresh from
+      // the network (bounded by withTimeout) and replace on success. If the
+      // refresh fails but we seeded, keep the saved library instead of blanking.
+      let _seeded=false;
+      const _disk=await readDiskCache();
+      if(_disk){
+        try{
+          _arr=_disk; _map=new Map(_disk.map(e=>[e.url,e])); _ts=Date.now();
+          allGames=_disk.map(toGame); _gameByUrl=new Map(allGames.map(g=>[g.url,g]));
+          filtered=allGames.slice(); renderGames(allGames); _seeded=true;
+        }catch(_e){_seeded=false;}
+      }
       try {
-        const arr=await loadCache();
-        allGames=arr.map(e=>({url:e.url||'',title:e.title||'',image:findCover(e.screenshots),_date:Date.parse(e.scraped_at||'')||0,_hay:(e.title+' '+(((e.extra&&e.extra.cusa_ids)||[]).map(c=>(c.cusa||'')+' '+(c.region||'')).join(' '))+' '+((e.extra&&e.extra.cusa_id)||'')).toLowerCase()}));
-        _gameByUrl=new Map(allGames.map(g=>[g.url,g]));
+        const arr=await withTimeout(loadCache(true),45000,'catalog load');
+        allGames=arr.map(toGame); _gameByUrl=new Map(allGames.map(g=>[g.url,g]));
         filtered=allGames.slice(); renderGames(allGames);
         showStatus(`Loaded ${allGames.length} games`);
       } catch(e) {
-        showStatus('Failed to load: '+(e.message||e),false);
+        showStatus((_seeded?'Showing saved library — couldn’t refresh: ':'Failed to load: ')+(e.message||e),false);
       } finally { hideProg(); setBtns(true); }
 
-      // ── Auto-update check → styled top banner (no native confirm dialogs) ──
-      // Fires 8s after boot so the initial cache load runs first. Hits the
-      // GitHub releases API via the check_for_updates Rust command, then shows
-      // a top banner (Update Now / Later) instead of a plain browser confirm().
-      // Tauri's install_update is a single blocking call with no progress
-      // events, so the bar is indeterminate (animated), not a real percentage.
+      // Silent background auto-update (no banner, no buttons): 8s after boot — so
+      // the library renders first — check GitHub for a newer release and, if one
+      // genuinely exists with an installer for this platform, download + install
+      // it and restart, with zero UI. The latest!==current guard is a belt-and-
+      // suspenders so the app can NEVER re-install the same version (no restart
+      // loop) even if check_for_updates ever returned a false "available". All
+      // failures are swallowed; most launches have no update and this is a no-op.
       setTimeout(async () => {
-        let info;
         try {
           const inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
           if (typeof inv !== 'function') return;
-          info = await inv('check_for_updates');
-        } catch (_) { return; /* silent — background check */ }
-        if (!info || !info.available) return;
-
-        const banner   = document.getElementById('updateBanner');
-        const text     = document.getElementById('updateBannerText');
-        const nowBtn   = document.getElementById('updateNowBtn');
-        const laterBtn = document.getElementById('updateLaterBtn');
-        const pbar     = document.getElementById('updateProgressBar');
-        const pfill    = document.getElementById('updateProgressFill');
-        if (!banner || !text || !nowBtn || !laterBtn) return;
-        const hide = () => { banner.style.display='none'; if(pbar) pbar.style.display='none'; };
-        laterBtn.onclick = hide;
-
-        // No automatic installer for this platform → offer the release page.
-        if (info.error) {
-          text.textContent = `🆕 v${info.latest} is available — no auto-installer for this platform`;
-          nowBtn.textContent = 'Open Release';
-          nowBtn.onclick = () => { if (info.release_url) openExternal(info.release_url); hide(); };
-          banner.style.display = 'flex';
-          return;
-        }
-
-        const sizeMb = info.asset_size ? ` · ${(info.asset_size/1048576).toFixed(0)} MB` : '';
-        text.textContent = `🆕 PS4 Game Browser v${info.latest} is available (you have v${info.current})${sizeMb}`;
-        banner.style.display = 'flex';
-
-        nowBtn.onclick = async () => {
-          nowBtn.disabled = true; laterBtn.disabled = true;
-          nowBtn.textContent = 'Updating…';
-          text.textContent = `Downloading v${info.latest}…`;
-          if (pbar && pfill) { pfill.classList.add('indet'); pbar.style.display='block'; }
-          try {
-            await window.__TAURI_INTERNALS__.invoke('install_update', {
-              downloadUrl: info.download_url,
-              assetName:   info.asset_name,
-              assetSize:   info.asset_size,
-            });
-          } catch (e) {
-            text.textContent = `Update failed: ${(e && e.toString && e.toString()) || 'unknown error'}`;
-            nowBtn.disabled = false; laterBtn.disabled = false;
-            nowBtn.textContent = 'Update Now';
-            if (pbar && pfill) { pfill.classList.remove('indet'); pbar.style.display='none'; }
-            return;
-          }
-          text.textContent = 'Update downloaded — restarting…';
-          if (pfill) { pfill.classList.remove('indet'); pfill.style.width='100%'; }
+          const info = await inv('check_for_updates');
+          if (!info || !info.available || info.error) return;        // up to date, or no auto-installer for this platform
+          if (!info.latest || info.latest === info.current) return;  // guard: never reinstall the same version
+          await inv('install_update', {
+            downloadUrl: info.download_url,
+            assetName:   info.asset_name,
+            assetSize:   info.asset_size,
+          });
+          // install_update swaps the exe + relaunches via spawn_updater; close
+          // this instance so the freshly-installed one takes over.
           setTimeout(() => window.close(), 1500);
-        };
+        } catch (_e) { /* silent — never disrupt the session on a failed update */ }
       }, 8000);
     });
 

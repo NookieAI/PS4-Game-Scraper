@@ -6,6 +6,8 @@ permissions = [
     "allow-check-for-updates",
     "allow-install-update",
     "allow-fetch-catalog",
+    "allow-read-catalog-cache",
+    "allow-write-catalog-cache",
 ]
 
 [[permission]]
@@ -22,3 +24,13 @@ commands.allow = ["install_update"]
 identifier  = "allow-fetch-catalog"
 description = "Allow the frontend to request the token-gated catalog JSON via Rust."
 commands.allow = ["fetch_catalog"]
+
+[[permission]]
+identifier  = "allow-read-catalog-cache"
+description = "Allow the frontend to read the persisted last-good catalog cache."
+commands.allow = ["read_catalog_cache"]
+
+[[permission]]
+identifier  = "allow-write-catalog-cache"
+description = "Allow the frontend to persist the last-good catalog cache to disk."
+commands.allow = ["write_catalog_cache"]

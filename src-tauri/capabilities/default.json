@@ -9,6 +9,8 @@
     "allow-check-for-updates",
     "allow-install-update",
     "allow-fetch-catalog",
+    "allow-read-catalog-cache",
+    "allow-write-catalog-cache",
     {
       "identifier": "http:default",
       "allow": [

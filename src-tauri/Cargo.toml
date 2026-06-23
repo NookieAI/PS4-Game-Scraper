@@ -1,6 +1,6 @@
 [package]
 name    = "ps4-game-browser"
-version = "4.1.1"
+version = "4.1.2"
 edition = "2021"
 
 [features]

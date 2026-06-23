@@ -606,6 +606,35 @@ async fn fetch_catalog(bust: Option<String>) -> Result<String, String> {
     resp.text().await.map_err(|e| format!("catalog body: {e}"))
 }
 
+/// Persist the last-good catalog JSON to the app-data dir so the next cold start
+/// renders the library instantly and survives an offline launch or the catalog
+/// origin going away. Written atomically (temp + rename) so a crash mid-write
+/// can't leave a truncated cache. The frontend treats persistence as optional.
+#[tauri::command]
+fn write_catalog_cache(app: tauri::AppHandle, data: String) -> Result<(), String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("catalog_cache.json");
+    let tmp = dir.join("catalog_cache.json.tmp");
+    std::fs::write(&tmp, data.as_bytes()).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Read the persisted catalog JSON (the previous successful load), if any.
+/// Returns Ok(None) when no cache file exists yet — the frontend then loads from
+/// the network as usual. Only a genuine read error (not a missing file) is Err.
+#[tauri::command]
+fn read_catalog_cache(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let path = dir.join("catalog_cache.json");
+    match std::fs::read_to_string(&path) {
+        Ok(s) => Ok(Some(s)),
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         // single-instance MUST be registered first. When a second copy of the
@@ -626,6 +655,8 @@ fn main() {
             check_for_updates,
             install_update,
             fetch_catalog,
+            read_catalog_cache,
+            write_catalog_cache,
         ])
         .run(tauri::generate_context!())
         .expect("error while running PS4 Game Browser");

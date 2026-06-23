@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "ps4-game-browser"
-version = "4.1.0"
+version = "4.1.2"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
