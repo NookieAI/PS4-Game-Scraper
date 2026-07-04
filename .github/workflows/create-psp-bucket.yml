@@ -1,0 +1,31 @@
+name: Create PSP R2 Bucket (one-shot)
+on:
+  workflow_dispatch:
+jobs:
+  create-psp-bucket:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create PSP bucket on Cloudflare R2
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID:         ${{ secrets.R2_ACCOUNT_ID }}
+        run: |
+          aws configure set default.s3.addressing_style path
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          # Create bucket (idempotent — succeeds even if it already exists)
+          aws s3api create-bucket \
+            --bucket psp \
+            --endpoint-url "$ENDPOINT" \
+            --region auto 2>&1 || true
+
+          # Verify bucket exists by listing it
+          aws s3 ls "s3://psp" \
+            --endpoint-url "$ENDPOINT" \
+            --region auto 2>&1 && echo "PSP bucket is ready." || echo "Bucket may be empty (new) - that is OK."
+
+          echo ""
+          echo "Next: enable public access on the psp bucket via:"
+          echo "  Cloudflare dashboard -> R2 -> psp -> Settings -> Public Access -> Enable"
+          echo "That gives you a pub-*.r2.dev URL to use as CDN_BASE in your apps."
